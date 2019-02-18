@@ -1,11 +1,4 @@
-package(default_visibility = ["//visibility:public"])
-
-licenses(["notice"])
-
-load(
-    "@io_bazel_rules_go//go:def.bzl",
-    "go_library",
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "go_default_library",
@@ -13,14 +6,19 @@ go_library(
         "container.go",
         "manager.go",
     ],
-    tags = ["automanaged"],
+    importmap = "k8s.io/kubernetes/vendor/github.com/google/cadvisor/manager",
+    importpath = "github.com/google/cadvisor/manager",
+    visibility = ["//visibility:public"],
     deps = [
         "//vendor/github.com/docker/go-units:go_default_library",
-        "//vendor/github.com/golang/glog:go_default_library",
+        "//vendor/github.com/google/cadvisor/accelerators:go_default_library",
         "//vendor/github.com/google/cadvisor/cache/memory:go_default_library",
         "//vendor/github.com/google/cadvisor/collector:go_default_library",
         "//vendor/github.com/google/cadvisor/container:go_default_library",
+        "//vendor/github.com/google/cadvisor/container/containerd:go_default_library",
+        "//vendor/github.com/google/cadvisor/container/crio:go_default_library",
         "//vendor/github.com/google/cadvisor/container/docker:go_default_library",
+        "//vendor/github.com/google/cadvisor/container/mesos:go_default_library",
         "//vendor/github.com/google/cadvisor/container/raw:go_default_library",
         "//vendor/github.com/google/cadvisor/container/rkt:go_default_library",
         "//vendor/github.com/google/cadvisor/container/systemd:go_default_library",
@@ -38,6 +36,9 @@ go_library(
         "//vendor/github.com/google/cadvisor/utils/sysfs:go_default_library",
         "//vendor/github.com/google/cadvisor/version:go_default_library",
         "//vendor/github.com/opencontainers/runc/libcontainer/cgroups:go_default_library",
+        "//vendor/golang.org/x/net/context:go_default_library",
+        "//vendor/k8s.io/klog:go_default_library",
+        "//vendor/k8s.io/utils/clock:go_default_library",
     ],
 )
 
@@ -55,4 +56,5 @@ filegroup(
         "//vendor/github.com/google/cadvisor/manager/watcher:all-srcs",
     ],
     tags = ["automanaged"],
+    visibility = ["//visibility:public"],
 )

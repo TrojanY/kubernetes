@@ -25,9 +25,9 @@ import (
 	"os"
 	"time"
 
-	capi "k8s.io/kubernetes/pkg/apis/certificates/v1beta1"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
-	certificatesinformers "k8s.io/kubernetes/pkg/client/informers/informers_generated/externalversions/certificates/v1beta1"
+	capi "k8s.io/api/certificates/v1beta1"
+	certificatesinformers "k8s.io/client-go/informers/certificates/v1beta1"
+	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/controller/certificates"
 
 	"github.com/cloudflare/cfssl/config"
@@ -50,7 +50,7 @@ func NewCSRSigningController(
 		client,
 		csrInformer,
 		signer.handle,
-	)
+	), nil
 }
 
 type cfsslSigner struct {
@@ -59,21 +59,24 @@ type cfsslSigner struct {
 	sigAlgo             x509.SignatureAlgorithm
 	client              clientset.Interface
 	certificateDuration time.Duration
+
+	// nowFn returns the current time.  We have here for unit testing
+	nowFn func() time.Time
 }
 
 func newCFSSLSigner(caFile, caKeyFile string, client clientset.Interface, certificateDuration time.Duration) (*cfsslSigner, error) {
 	ca, err := ioutil.ReadFile(caFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error reading CA cert file %q: %v", caFile, err)
 	}
 	cakey, err := ioutil.ReadFile(caKeyFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error reading CA key file %q: %v", caKeyFile, err)
 	}
 
 	parsedCa, err := helpers.ParseCertificatePEM(ca)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error parsing CA cert file %q: %v", caFile, err)
 	}
 
 	strPassword := os.Getenv("CFSSL_CA_PK_PASSWORD")
@@ -92,6 +95,7 @@ func newCFSSLSigner(caFile, caKeyFile string, client clientset.Interface, certif
 		sigAlgo:             signer.DefaultSigAlgo(priv),
 		client:              client,
 		certificateDuration: certificateDuration,
+		nowFn:               time.Now,
 	}, nil
 }
 
@@ -103,7 +107,7 @@ func (s *cfsslSigner) handle(csr *capi.CertificateSigningRequest) error {
 	if err != nil {
 		return fmt.Errorf("error auto signing csr: %v", err)
 	}
-	_, err = s.client.Certificates().CertificateSigningRequests().UpdateStatus(csr)
+	_, err = s.client.CertificatesV1beta1().CertificateSigningRequests().UpdateStatus(csr)
 	if err != nil {
 		return fmt.Errorf("error updating signature for csr: %v", err)
 	}
@@ -115,11 +119,21 @@ func (s *cfsslSigner) sign(csr *capi.CertificateSigningRequest) (*capi.Certifica
 	for _, usage := range csr.Spec.Usages {
 		usages = append(usages, string(usage))
 	}
+
+	certExpiryDuration := s.certificateDuration
+	durationUntilExpiry := s.ca.NotAfter.Sub(s.nowFn())
+	if durationUntilExpiry <= 0 {
+		return nil, fmt.Errorf("the signer has expired: %v", s.ca.NotAfter)
+	}
+	if durationUntilExpiry < certExpiryDuration {
+		certExpiryDuration = durationUntilExpiry
+	}
+
 	policy := &config.Signing{
 		Default: &config.SigningProfile{
 			Usage:        usages,
-			Expiry:       s.certificateDuration,
-			ExpiryString: s.certificateDuration.String(),
+			Expiry:       certExpiryDuration,
+			ExpiryString: certExpiryDuration.String(),
 		},
 	}
 	cfs, err := local.NewSigner(s.priv, s.ca, s.sigAlgo, policy)

@@ -17,107 +17,85 @@ limitations under the License.
 package gce
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"path"
-	"strings"
-	"time"
 
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/kubernetes/pkg/cloudprovider"
-
-	"github.com/golang/glog"
 	compute "google.golang.org/api/compute/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog"
+
+	"github.com/GoogleCloudPlatform/k8s-cloud-provider/pkg/cloud"
+	"github.com/GoogleCloudPlatform/k8s-cloud-provider/pkg/cloud/filter"
+	"github.com/GoogleCloudPlatform/k8s-cloud-provider/pkg/cloud/meta"
+	cloudprovider "k8s.io/cloud-provider"
 )
 
 func newRoutesMetricContext(request string) *metricContext {
-	return &metricContext{
-		start:      time.Now(),
-		attributes: []string{"routes_" + request, unusedMetricLabel, unusedMetricLabel},
-	}
+	return newGenericMetricContext("routes", request, unusedMetricLabel, unusedMetricLabel, computeV1Version)
 }
 
-func (gce *GCECloud) ListRoutes(clusterName string) ([]*cloudprovider.Route, error) {
-	var routes []*cloudprovider.Route
-	pageToken := ""
-	page := 0
-	for ; page == 0 || (pageToken != "" && page < maxPages); page++ {
-		mc := newRoutesMetricContext("list_page")
-		listCall := gce.service.Routes.List(gce.projectID)
+// ListRoutes in the cloud environment.
+func (g *Cloud) ListRoutes(ctx context.Context, clusterName string) ([]*cloudprovider.Route, error) {
+	ctx, cancel := cloud.ContextWithCallTimeout()
+	defer cancel()
 
-		prefix := truncateClusterName(clusterName)
-		listCall = listCall.Filter("name eq " + prefix + "-.*")
-		if pageToken != "" {
-			listCall = listCall.PageToken(pageToken)
-		}
-		res, err := listCall.Do()
-		mc.Observe(err)
-		if err != nil {
-			glog.Errorf("Error getting routes from GCE: %v", err)
-			return nil, err
-		}
-		pageToken = res.NextPageToken
-		for _, r := range res.Items {
-			if r.Network != gce.networkURL {
-				continue
-			}
-			// Not managed if route description != "k8s-node-route"
-			if r.Description != k8sNodeRouteTag {
-				continue
-			}
-			// Not managed if route name doesn't start with <clusterName>
-			if !strings.HasPrefix(r.Name, prefix) {
-				continue
-			}
-
-			target := path.Base(r.NextHopInstance)
-			// TODO: Should we lastComponent(target) this?
-			targetNodeName := types.NodeName(target) // NodeName == Instance Name on GCE
-			routes = append(routes, &cloudprovider.Route{Name: r.Name, TargetNode: targetNodeName, DestinationCIDR: r.DestRange})
-		}
-	}
-	if page >= maxPages {
-		glog.Errorf("ListRoutes exceeded maxPages=%d for Routes.List; truncating.", maxPages)
-	}
-	return routes, nil
-}
-
-func (gce *GCECloud) CreateRoute(clusterName string, nameHint string, route *cloudprovider.Route) error {
-	routeName := truncateClusterName(clusterName) + "-" + nameHint
-
-	instanceName := mapNodeNameToInstanceName(route.TargetNode)
-	targetInstance, err := gce.getInstanceByName(instanceName)
+	mc := newRoutesMetricContext("list")
+	prefix := truncateClusterName(clusterName)
+	f := filter.Regexp("name", prefix+"-.*").AndRegexp("network", g.NetworkURL()).AndRegexp("description", k8sNodeRouteTag)
+	routes, err := g.c.Routes().List(ctx, f)
 	if err != nil {
-		return err
+		return nil, mc.Observe(err)
 	}
+	var croutes []*cloudprovider.Route
+	for _, r := range routes {
+		target := path.Base(r.NextHopInstance)
+		// TODO: Should we lastComponent(target) this?
+		targetNodeName := types.NodeName(target) // NodeName == Instance Name on GCE
+		croutes = append(croutes, &cloudprovider.Route{
+			Name:            r.Name,
+			TargetNode:      targetNodeName,
+			DestinationCIDR: r.DestRange,
+		})
+	}
+	return croutes, mc.Observe(nil)
+}
+
+// CreateRoute in the cloud environment.
+func (g *Cloud) CreateRoute(ctx context.Context, clusterName string, nameHint string, route *cloudprovider.Route) error {
+	ctx, cancel := cloud.ContextWithCallTimeout()
+	defer cancel()
 
 	mc := newRoutesMetricContext("create")
-	insertOp, err := gce.service.Routes.Insert(gce.projectID, &compute.Route{
-		Name:            routeName,
-		DestRange:       route.DestinationCIDR,
-		NextHopInstance: fmt.Sprintf("zones/%s/instances/%s", targetInstance.Zone, targetInstance.Name),
-		Network:         gce.networkURL,
-		Priority:        1000,
-		Description:     k8sNodeRouteTag,
-	}).Do()
-	if err != nil {
-		if isHTTPErrorCode(err, http.StatusConflict) {
-			glog.Info("Route %v already exists.")
-			return nil
-		} else {
-			return mc.Observe(err)
-		}
-	}
-	return gce.waitForGlobalOp(insertOp, mc)
-}
 
-func (gce *GCECloud) DeleteRoute(clusterName string, route *cloudprovider.Route) error {
-	mc := newRoutesMetricContext("delete")
-	deleteOp, err := gce.service.Routes.Delete(gce.projectID, route.Name).Do()
+	targetInstance, err := g.getInstanceByName(mapNodeNameToInstanceName(route.TargetNode))
 	if err != nil {
 		return mc.Observe(err)
 	}
-	return gce.waitForGlobalOp(deleteOp, mc)
+	cr := &compute.Route{
+		Name:            truncateClusterName(clusterName) + "-" + nameHint,
+		DestRange:       route.DestinationCIDR,
+		NextHopInstance: fmt.Sprintf("zones/%s/instances/%s", targetInstance.Zone, targetInstance.Name),
+		Network:         g.NetworkURL(),
+		Priority:        1000,
+		Description:     k8sNodeRouteTag,
+	}
+	err = g.c.Routes().Insert(ctx, meta.GlobalKey(cr.Name), cr)
+	if isHTTPErrorCode(err, http.StatusConflict) {
+		klog.Infof("Route %q already exists.", cr.Name)
+		err = nil
+	}
+	return mc.Observe(err)
+}
+
+// DeleteRoute from the cloud environment.
+func (g *Cloud) DeleteRoute(ctx context.Context, clusterName string, route *cloudprovider.Route) error {
+	ctx, cancel := cloud.ContextWithCallTimeout()
+	defer cancel()
+
+	mc := newRoutesMetricContext("delete")
+	return mc.Observe(g.c.Routes().Delete(ctx, meta.GlobalKey(route.Name)))
 }
 
 func truncateClusterName(clusterName string) string {

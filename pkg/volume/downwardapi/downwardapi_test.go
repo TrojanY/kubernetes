@@ -23,15 +23,15 @@ import (
 	"path"
 	"testing"
 
+	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 	utiltesting "k8s.io/client-go/util/testing"
-	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset/fake"
 	"k8s.io/kubernetes/pkg/fieldpath"
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/empty_dir"
+	"k8s.io/kubernetes/pkg/volume/emptydir"
 	volumetest "k8s.io/kubernetes/pkg/volume/testing"
 )
 
@@ -47,14 +47,14 @@ func newTestHost(t *testing.T, clientset clientset.Interface) (string, volume.Vo
 	if err != nil {
 		t.Fatalf("can't make a temp rootdir: %v", err)
 	}
-	return tempDir, volumetest.NewFakeVolumeHost(tempDir, clientset, empty_dir.ProbeVolumePlugins())
+	return tempDir, volumetest.NewFakeVolumeHost(tempDir, clientset, emptydir.ProbeVolumePlugins())
 }
 
 func TestCanSupport(t *testing.T) {
 	pluginMgr := volume.VolumePluginMgr{}
 	tmpDir, host := newTestHost(t, nil)
 	defer os.RemoveAll(tmpDir)
-	pluginMgr.InitPlugins(ProbeVolumePlugins(), host)
+	pluginMgr.InitPlugins(ProbeVolumePlugins(), nil /* prober */, host)
 
 	plugin, err := pluginMgr.FindPluginByName(downwardAPIPluginName)
 	if err != nil {
@@ -62,6 +62,12 @@ func TestCanSupport(t *testing.T) {
 	}
 	if plugin.GetPluginName() != downwardAPIPluginName {
 		t.Errorf("Wrong name: %s", plugin.GetPluginName())
+	}
+	if !plugin.CanSupport(&volume.Spec{Volume: &v1.Volume{VolumeSource: v1.VolumeSource{DownwardAPI: &v1.DownwardAPIVolumeSource{}}}}) {
+		t.Errorf("Expected true")
+	}
+	if plugin.CanSupport(&volume.Spec{Volume: &v1.Volume{VolumeSource: v1.VolumeSource{}}}) {
+		t.Errorf("Expected false")
 	}
 }
 
@@ -76,8 +82,9 @@ func TestDownwardAPI(t *testing.T) {
 		"key3": "value3",
 	}
 	annotations := map[string]string{
-		"a1": "value1",
-		"a2": "value2",
+		"a1":        "value1",
+		"a2":        "value2",
+		"multiline": "c\nb\na",
 	}
 	testCases := []struct {
 		name           string
@@ -219,7 +226,7 @@ func newDownwardAPITest(t *testing.T, name string, volumeFiles, podLabels, podAn
 
 	pluginMgr := volume.VolumePluginMgr{}
 	rootDir, host := newTestHost(t, clientset)
-	pluginMgr.InitPlugins(ProbeVolumePlugins(), host)
+	pluginMgr.InitPlugins(ProbeVolumePlugins(), nil /* prober */, host)
 	plugin, err := pluginMgr.FindPluginByName(downwardAPIPluginName)
 	if err != nil {
 		t.Errorf("Can't find the plugin by name")
@@ -241,7 +248,7 @@ func newDownwardAPITest(t *testing.T, name string, volumeFiles, podLabels, podAn
 		t.Errorf("Failed to make a new Mounter: %v", err)
 	}
 	if mounter == nil {
-		t.Errorf("Got a nil Mounter")
+		t.Fatalf("Got a nil Mounter")
 	}
 
 	volumePath := mounter.GetPath()
@@ -278,7 +285,7 @@ func (test *downwardAPITest) tearDown() {
 		test.t.Errorf("Failed to make a new Unmounter: %v", err)
 	}
 	if unmounter == nil {
-		test.t.Errorf("Got a nil Unmounter")
+		test.t.Fatalf("Got a nil Unmounter")
 	}
 
 	if err := unmounter.TearDown(); err != nil {
@@ -287,7 +294,7 @@ func (test *downwardAPITest) tearDown() {
 	if _, err := os.Stat(test.volumePath); err == nil {
 		test.t.Errorf("TearDown() failed, volume path still exists: %s", test.volumePath)
 	} else if !os.IsNotExist(err) {
-		test.t.Errorf("SetUp() failed: %v", err)
+		test.t.Errorf("TearDown() failed: %v", err)
 	}
 	os.RemoveAll(test.rootDir)
 }
@@ -312,8 +319,8 @@ func doVerifyLinesInFile(t *testing.T, volumePath, filename string, expected str
 		t.Errorf(err.Error())
 		return
 	}
-	actualStr := sortLines(string(data))
-	expectedStr := sortLines(expected)
+	actualStr := string(data)
+	expectedStr := expected
 	if actualStr != expectedStr {
 		t.Errorf("Found `%s`, expected `%s`", actualStr, expectedStr)
 	}

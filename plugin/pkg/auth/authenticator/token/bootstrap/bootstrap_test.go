@@ -17,27 +17,28 @@ limitations under the License.
 package bootstrap
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/authentication/user"
-	"k8s.io/kubernetes/pkg/api"
-	bootstrapapi "k8s.io/kubernetes/pkg/bootstrap/api"
+	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
 )
 
 type lister struct {
-	secrets []*api.Secret
+	secrets []*corev1.Secret
 }
 
-func (l *lister) List(selector labels.Selector) (ret []*api.Secret, err error) {
+func (l *lister) List(selector labels.Selector) (ret []*corev1.Secret, err error) {
 	return l.secrets, nil
 }
 
-func (l *lister) Get(name string) (*api.Secret, error) {
+func (l *lister) Get(name string) (*corev1.Secret, error) {
 	for _, s := range l.secrets {
 		if s.Name == name {
 			return s, nil
@@ -52,10 +53,12 @@ const (
 )
 
 func TestTokenAuthenticator(t *testing.T) {
+	now := metav1.Now()
+
 	tests := []struct {
 		name string
 
-		secrets []*api.Secret
+		secrets []*corev1.Secret
 		token   string
 
 		wantNotFound bool
@@ -63,7 +66,7 @@ func TestTokenAuthenticator(t *testing.T) {
 	}{
 		{
 			name: "valid token",
-			secrets: []*api.Secret{
+			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: bootstrapapi.BootstrapTokenSecretPrefix + tokenID,
@@ -83,8 +86,49 @@ func TestTokenAuthenticator(t *testing.T) {
 			},
 		},
 		{
+			name: "valid token with extra group",
+			secrets: []*corev1.Secret{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: bootstrapapi.BootstrapTokenSecretPrefix + tokenID,
+					},
+					Data: map[string][]byte{
+						bootstrapapi.BootstrapTokenIDKey:               []byte(tokenID),
+						bootstrapapi.BootstrapTokenSecretKey:           []byte(tokenSecret),
+						bootstrapapi.BootstrapTokenUsageAuthentication: []byte("true"),
+						bootstrapapi.BootstrapTokenExtraGroupsKey:      []byte("system:bootstrappers:foo"),
+					},
+					Type: "bootstrap.kubernetes.io/token",
+				},
+			},
+			token: tokenID + "." + tokenSecret,
+			wantUser: &user.DefaultInfo{
+				Name:   "system:bootstrap:" + tokenID,
+				Groups: []string{"system:bootstrappers", "system:bootstrappers:foo"},
+			},
+		},
+		{
+			name: "invalid group",
+			secrets: []*corev1.Secret{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: bootstrapapi.BootstrapTokenSecretPrefix + tokenID,
+					},
+					Data: map[string][]byte{
+						bootstrapapi.BootstrapTokenIDKey:               []byte(tokenID),
+						bootstrapapi.BootstrapTokenSecretKey:           []byte(tokenSecret),
+						bootstrapapi.BootstrapTokenUsageAuthentication: []byte("true"),
+						bootstrapapi.BootstrapTokenExtraGroupsKey:      []byte("foo"),
+					},
+					Type: "bootstrap.kubernetes.io/token",
+				},
+			},
+			token:        tokenID + "." + tokenSecret,
+			wantNotFound: true,
+		},
+		{
 			name: "invalid secret name",
-			secrets: []*api.Secret{
+			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "bad-name",
@@ -102,7 +146,7 @@ func TestTokenAuthenticator(t *testing.T) {
 		},
 		{
 			name: "no usage",
-			secrets: []*api.Secret{
+			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: bootstrapapi.BootstrapTokenSecretPrefix + tokenID,
@@ -119,7 +163,7 @@ func TestTokenAuthenticator(t *testing.T) {
 		},
 		{
 			name: "wrong token",
-			secrets: []*api.Secret{
+			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: bootstrapapi.BootstrapTokenSecretPrefix + tokenID,
@@ -136,8 +180,27 @@ func TestTokenAuthenticator(t *testing.T) {
 			wantNotFound: true,
 		},
 		{
+			name: "deleted token",
+			secrets: []*corev1.Secret{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:              bootstrapapi.BootstrapTokenSecretPrefix + tokenID,
+						DeletionTimestamp: &now,
+					},
+					Data: map[string][]byte{
+						bootstrapapi.BootstrapTokenIDKey:               []byte(tokenID),
+						bootstrapapi.BootstrapTokenSecretKey:           []byte(tokenSecret),
+						bootstrapapi.BootstrapTokenUsageAuthentication: []byte("true"),
+					},
+					Type: "bootstrap.kubernetes.io/token",
+				},
+			},
+			token:        tokenID + "." + tokenSecret,
+			wantNotFound: true,
+		},
+		{
 			name: "expired token",
-			secrets: []*api.Secret{
+			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: bootstrapapi.BootstrapTokenSecretPrefix + tokenID,
@@ -156,7 +219,7 @@ func TestTokenAuthenticator(t *testing.T) {
 		},
 		{
 			name: "not expired token",
-			secrets: []*api.Secret{
+			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: bootstrapapi.BootstrapTokenSecretPrefix + tokenID,
@@ -178,7 +241,7 @@ func TestTokenAuthenticator(t *testing.T) {
 		},
 		{
 			name: "token id wrong length",
-			secrets: []*api.Secret{
+			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: bootstrapapi.BootstrapTokenSecretPrefix + "foo",
@@ -200,7 +263,7 @@ func TestTokenAuthenticator(t *testing.T) {
 	for _, test := range tests {
 		func() {
 			a := NewTokenAuthenticator(&lister{test.secrets})
-			u, found, err := a.AuthenticateToken(test.token)
+			resp, found, err := a.AuthenticateToken(context.Background(), test.token)
 			if err != nil {
 				t.Errorf("test %q returned an error: %v", test.name, err)
 				return
@@ -218,11 +281,79 @@ func TestTokenAuthenticator(t *testing.T) {
 				return
 			}
 
-			gotUser := u.(*user.DefaultInfo)
-
+			gotUser := resp.User.(*user.DefaultInfo)
 			if !reflect.DeepEqual(gotUser, test.wantUser) {
 				t.Errorf("test %q want user=%#v, got=%#v", test.name, test.wantUser, gotUser)
 			}
 		}()
+	}
+}
+
+func TestGetGroups(t *testing.T) {
+	tests := []struct {
+		name         string
+		secret       *corev1.Secret
+		expectResult []string
+		expectError  bool
+	}{
+		{
+			name: "not set",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "test"},
+				Data:       map[string][]byte{},
+			},
+			expectResult: []string{"system:bootstrappers"},
+		},
+		{
+			name: "set to empty value",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "test"},
+				Data: map[string][]byte{
+					bootstrapapi.BootstrapTokenExtraGroupsKey: []byte(""),
+				},
+			},
+			expectResult: []string{"system:bootstrappers"},
+		},
+		{
+			name: "invalid prefix",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "test"},
+				Data: map[string][]byte{
+					bootstrapapi.BootstrapTokenExtraGroupsKey: []byte("foo"),
+				},
+			},
+			expectError: true,
+		},
+		{
+			name: "valid",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "test"},
+				Data: map[string][]byte{
+					bootstrapapi.BootstrapTokenExtraGroupsKey: []byte("system:bootstrappers:foo,system:bootstrappers:bar,system:bootstrappers:bar"),
+				},
+			},
+			// expect the results in deduplicated, sorted order
+			expectResult: []string{
+				"system:bootstrappers",
+				"system:bootstrappers:bar",
+				"system:bootstrappers:foo",
+			},
+		},
+	}
+	for _, test := range tests {
+		result, err := getGroups(test.secret)
+		if test.expectError {
+			if err == nil {
+				t.Errorf("test %q expected an error, but didn't get one (result: %#v)", test.name, result)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("test %q return an unexpected error: %v", test.name, err)
+			continue
+		}
+		if !reflect.DeepEqual(result, test.expectResult) {
+			t.Errorf("test %q expected %#v, got %#v", test.name, test.expectResult, result)
+		}
 	}
 }

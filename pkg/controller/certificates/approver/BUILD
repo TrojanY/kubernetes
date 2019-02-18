@@ -1,7 +1,5 @@
 package(default_visibility = ["//visibility:public"])
 
-licenses(["notice"])
-
 load(
     "@io_bazel_rules_go//go:def.bzl",
     "go_library",
@@ -11,28 +9,29 @@ load(
 go_test(
     name = "go_default_test",
     srcs = ["sarapprove_test.go"],
-    library = ":go_default_library",
-    tags = ["automanaged"],
+    embed = [":go_default_library"],
     deps = [
-        "//pkg/apis/authorization/v1beta1:go_default_library",
         "//pkg/apis/certificates/v1beta1:go_default_library",
-        "//pkg/client/clientset_generated/clientset/fake:go_default_library",
-        "//vendor/k8s.io/apimachinery/pkg/runtime:go_default_library",
-        "//vendor/k8s.io/apimachinery/pkg/runtime/schema:go_default_library",
-        "//vendor/k8s.io/client-go/testing:go_default_library",
+        "//staging/src/k8s.io/api/authorization/v1beta1:go_default_library",
+        "//staging/src/k8s.io/api/certificates/v1beta1:go_default_library",
+        "//staging/src/k8s.io/apimachinery/pkg/runtime:go_default_library",
+        "//staging/src/k8s.io/apimachinery/pkg/runtime/schema:go_default_library",
+        "//staging/src/k8s.io/client-go/kubernetes/fake:go_default_library",
+        "//staging/src/k8s.io/client-go/testing:go_default_library",
     ],
 )
 
 go_library(
     name = "go_default_library",
     srcs = ["sarapprove.go"],
-    tags = ["automanaged"],
+    importpath = "k8s.io/kubernetes/pkg/controller/certificates/approver",
     deps = [
-        "//pkg/apis/authorization/v1beta1:go_default_library",
         "//pkg/apis/certificates/v1beta1:go_default_library",
-        "//pkg/client/clientset_generated/clientset:go_default_library",
-        "//pkg/client/informers/informers_generated/externalversions/certificates/v1beta1:go_default_library",
         "//pkg/controller/certificates:go_default_library",
+        "//staging/src/k8s.io/api/authorization/v1beta1:go_default_library",
+        "//staging/src/k8s.io/api/certificates/v1beta1:go_default_library",
+        "//staging/src/k8s.io/client-go/informers/certificates/v1beta1:go_default_library",
+        "//staging/src/k8s.io/client-go/kubernetes:go_default_library",
     ],
 )
 

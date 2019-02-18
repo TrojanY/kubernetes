@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Copyright 2014 The Kubernetes Authors.
 #
@@ -32,7 +32,6 @@ BINS=(
 	cmd/genkubedocs
 	cmd/genman
 	cmd/genyaml
-	federation/cmd/genfeddocs
 )
 make -C "${KUBE_ROOT}" WHAT="${BINS[*]}"
 
@@ -48,6 +47,3 @@ kube::util::remove-gen-docs
 shopt -s dotglob
 cp -af "${KUBE_TEMP}"/* "${KUBE_ROOT}"
 shopt -u dotglob
-
-# Replace with placeholder docs
-kube::util::set-placeholder-gen-docs

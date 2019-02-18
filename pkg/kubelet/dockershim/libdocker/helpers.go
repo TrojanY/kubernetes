@@ -20,10 +20,10 @@ import (
 	"strings"
 	"time"
 
-	dockerdigest "github.com/docker/distribution/digest"
 	dockerref "github.com/docker/distribution/reference"
-	dockertypes "github.com/docker/engine-api/types"
-	"github.com/golang/glog"
+	dockertypes "github.com/docker/docker/api/types"
+	godigest "github.com/opencontainers/go-digest"
+	"k8s.io/klog"
 )
 
 // ParseDockerTimestamp parses the timestamp returned by Interface from string to time.Time
@@ -40,9 +40,9 @@ func ParseDockerTimestamp(s string) (time.Time, error) {
 func matchImageTagOrSHA(inspected dockertypes.ImageInspect, image string) bool {
 	// The image string follows the grammar specified here
 	// https://github.com/docker/distribution/blob/master/reference/reference.go#L4
-	named, err := dockerref.ParseNamed(image)
+	named, err := dockerref.ParseNormalizedNamed(image)
 	if err != nil {
-		glog.V(4).Infof("couldn't parse image reference %q: %v", image, err)
+		klog.V(4).Infof("couldn't parse image reference %q: %v", image, err)
 		return false
 	}
 	_, isTagged := named.(dockerref.Tagged)
@@ -60,15 +60,47 @@ func matchImageTagOrSHA(inspected dockertypes.ImageInspect, image string) bool {
 			// hostname or not, we only check for the suffix match.
 			if strings.HasSuffix(image, tag) || strings.HasSuffix(tag, image) {
 				return true
+			} else {
+				// TODO: We need to remove this hack when project atomic based
+				// docker distro(s) like centos/fedora/rhel image fix problems on
+				// their end.
+				// Say the tag is "docker.io/busybox:latest"
+				// and the image is "docker.io/library/busybox:latest"
+				t, err := dockerref.ParseNormalizedNamed(tag)
+				if err != nil {
+					continue
+				}
+				// the parsed/normalized tag will look like
+				// reference.taggedReference {
+				// 	 namedRepository: reference.repository {
+				// 	   domain: "docker.io",
+				// 	   path: "library/busybox"
+				//	},
+				// 	tag: "latest"
+				// }
+				// If it does not have tags then we bail out
+				t2, ok := t.(dockerref.Tagged)
+				if !ok {
+					continue
+				}
+				// normalized tag would look like "docker.io/library/busybox:latest"
+				// note the library get added in the string
+				normalizedTag := t2.String()
+				if normalizedTag == "" {
+					continue
+				}
+				if strings.HasSuffix(image, normalizedTag) || strings.HasSuffix(normalizedTag, image) {
+					return true
+				}
 			}
 		}
 	}
 
 	if isDigested {
 		for _, repoDigest := range inspected.RepoDigests {
-			named, err := dockerref.ParseNamed(repoDigest)
+			named, err := dockerref.ParseNormalizedNamed(repoDigest)
 			if err != nil {
-				glog.V(4).Infof("couldn't parse image RepoDigest reference %q: %v", repoDigest, err)
+				klog.V(4).Infof("couldn't parse image RepoDigest reference %q: %v", repoDigest, err)
 				continue
 			}
 			if d, isDigested := named.(dockerref.Digested); isDigested {
@@ -80,16 +112,16 @@ func matchImageTagOrSHA(inspected dockertypes.ImageInspect, image string) bool {
 		}
 
 		// process the ID as a digest
-		id, err := dockerdigest.ParseDigest(inspected.ID)
+		id, err := godigest.Parse(inspected.ID)
 		if err != nil {
-			glog.V(4).Infof("couldn't parse image ID reference %q: %v", id, err)
+			klog.V(4).Infof("couldn't parse image ID reference %q: %v", id, err)
 			return false
 		}
 		if digest.Digest().Algorithm().String() == id.Algorithm().String() && digest.Digest().Hex() == id.Hex() {
 			return true
 		}
 	}
-	glog.V(4).Infof("Inspected image (%q) does not match %s", inspected.ID, image)
+	klog.V(4).Infof("Inspected image (%q) does not match %s", inspected.ID, image)
 	return false
 }
 
@@ -106,19 +138,19 @@ func matchImageIDOnly(inspected dockertypes.ImageInspect, image string) bool {
 	// Otherwise, we should try actual parsing to be more correct
 	ref, err := dockerref.Parse(image)
 	if err != nil {
-		glog.V(4).Infof("couldn't parse image reference %q: %v", image, err)
+		klog.V(4).Infof("couldn't parse image reference %q: %v", image, err)
 		return false
 	}
 
 	digest, isDigested := ref.(dockerref.Digested)
 	if !isDigested {
-		glog.V(4).Infof("the image reference %q was not a digest reference", image)
+		klog.V(4).Infof("the image reference %q was not a digest reference", image)
 		return false
 	}
 
-	id, err := dockerdigest.ParseDigest(inspected.ID)
+	id, err := godigest.Parse(inspected.ID)
 	if err != nil {
-		glog.V(4).Infof("couldn't parse image ID reference %q: %v", id, err)
+		klog.V(4).Infof("couldn't parse image ID reference %q: %v", id, err)
 		return false
 	}
 
@@ -126,7 +158,7 @@ func matchImageIDOnly(inspected dockertypes.ImageInspect, image string) bool {
 		return true
 	}
 
-	glog.V(4).Infof("The reference %s does not directly refer to the given image's ID (%q)", image, inspected.ID)
+	klog.V(4).Infof("The reference %s does not directly refer to the given image's ID (%q)", image, inspected.ID)
 	return false
 }
 

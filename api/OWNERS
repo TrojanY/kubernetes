@@ -1,44 +1,9 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+
+# Disable inheritance as this is an api owners file
+options:
+  no_parent_owners: true
 approvers:
-- erictune
-- lavalamp
-- smarterclayton
-- thockin
+- api-approvers
 reviewers:
-- thockin
-- lavalamp
-- smarterclayton
-- wojtek-t
-- deads2k
-- yujuhong
-- brendandburns
-- derekwaynecarr
-- caesarxuchao
-- vishh
-- mikedanese
-- liggitt
-- nikhiljindal
-- bprashanth
-- gmarek
-- erictune
-- davidopp
-- pmorie
-- sttts
-- kargakis
-- dchen1107
-- saad-ali
-- zmerlynn
-- luxas
-- janetkuo
-- justinsb
-- pwittrock
-- roberthbailey
-- ncdc
-- timstclair
-- yifan-gu
-- eparis
-- mwielgus
-- timothysc
-- soltysh
-- piosz
-- jsafrane
-- jbeda
+- api-reviewers

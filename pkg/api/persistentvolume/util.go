@@ -17,39 +17,44 @@ limitations under the License.
 package persistentvolume
 
 import (
-	"k8s.io/kubernetes/pkg/api"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/features"
 )
 
-// VisitPVSecretNames invokes the visitor function with the name of every secret
-// referenced by the PV spec. If visitor returns false, visiting is short-circuited.
-// Returns true if visiting completed, false if visiting was short-circuited.
-func VisitPVSecretNames(pv *api.PersistentVolume, visitor func(string) bool) bool {
-	source := &pv.Spec.PersistentVolumeSource
-	switch {
-	case source.AzureFile != nil:
-		if len(source.AzureFile.SecretName) > 0 && !visitor(source.AzureFile.SecretName) {
-			return false
-		}
-	case source.CephFS != nil:
-		if source.CephFS.SecretRef != nil && !visitor(source.CephFS.SecretRef.Name) {
-			return false
-		}
-	case source.FlexVolume != nil:
-		if source.FlexVolume.SecretRef != nil && !visitor(source.FlexVolume.SecretRef.Name) {
-			return false
-		}
-	case source.RBD != nil:
-		if source.RBD.SecretRef != nil && !visitor(source.RBD.SecretRef.Name) {
-			return false
-		}
-	case source.ScaleIO != nil:
-		if source.ScaleIO.SecretRef != nil && !visitor(source.ScaleIO.SecretRef.Name) {
-			return false
-		}
-	case source.ISCSI != nil:
-		if source.ISCSI.SecretRef != nil && !visitor(source.ISCSI.SecretRef.Name) {
-			return false
+// DropDisabledFields removes disabled fields from the pv spec.
+// This should be called from PrepareForCreate/PrepareForUpdate for all resources containing a pv spec.
+func DropDisabledFields(pvSpec *api.PersistentVolumeSpec, oldPVSpec *api.PersistentVolumeSpec) {
+	if !utilfeature.DefaultFeatureGate.Enabled(features.BlockVolume) && !volumeModeInUse(oldPVSpec) {
+		pvSpec.VolumeMode = nil
+	}
+	if !utilfeature.DefaultFeatureGate.Enabled(features.PersistentLocalVolumes) && !persistentLocalVolumesInUse(oldPVSpec) {
+		pvSpec.PersistentVolumeSource.Local = nil
+	}
+	if !utilfeature.DefaultFeatureGate.Enabled(features.CSIPersistentVolume) {
+		// if this is a new PV, or the old PV didn't already have the CSI field, clear it
+		if oldPVSpec == nil || oldPVSpec.PersistentVolumeSource.CSI == nil {
+			pvSpec.PersistentVolumeSource.CSI = nil
 		}
 	}
-	return true
+}
+
+func volumeModeInUse(oldPVSpec *api.PersistentVolumeSpec) bool {
+	if oldPVSpec == nil {
+		return false
+	}
+	if oldPVSpec.VolumeMode != nil {
+		return true
+	}
+	return false
+}
+
+func persistentLocalVolumesInUse(oldPVSpec *api.PersistentVolumeSpec) bool {
+	if oldPVSpec == nil {
+		return false
+	}
+	if oldPVSpec.PersistentVolumeSource.Local != nil {
+		return true
+	}
+	return false
 }

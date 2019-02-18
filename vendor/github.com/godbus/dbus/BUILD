@@ -1,11 +1,4 @@
-package(default_visibility = ["//visibility:public"])
-
-licenses(["notice"])
-
-load(
-    "@io_bazel_rules_go//go:def.bzl",
-    "go_library",
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "go_default_library",
@@ -15,6 +8,7 @@ go_library(
         "auth_sha1.go",
         "call.go",
         "conn.go",
+        "conn_darwin.go",
         "conn_other.go",
         "dbus.go",
         "decoder.go",
@@ -26,14 +20,19 @@ go_library(
         "message.go",
         "object.go",
         "sig.go",
+        "transport_darwin.go",
         "transport_generic.go",
         "transport_unix.go",
+        "transport_unixcred_dragonfly.go",
         "transport_unixcred_linux.go",
         "variant.go",
         "variant_lexer.go",
         "variant_parser.go",
     ],
-    tags = ["automanaged"],
+    cgo = True,
+    importmap = "k8s.io/kubernetes/vendor/github.com/godbus/dbus",
+    importpath = "github.com/godbus/dbus",
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
@@ -47,4 +46,5 @@ filegroup(
     name = "all-srcs",
     srcs = [":package-srcs"],
     tags = ["automanaged"],
+    visibility = ["//visibility:public"],
 )

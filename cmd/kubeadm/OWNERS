@@ -1,14 +1,23 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+
 approvers:
-- errordeveloper
-- jbeda
 - luxas
-- mikedanese
-- krousey
+- timothysc
+- fabriziopandini
+- neolit123
 reviewers:
-- mikedanese
 - luxas
-- justinsb
-- errordeveloper
-- lukemarsden
-- dmmcquay
-- krousey
+- timothysc
+- fabriziopandini
+- neolit123
+- kad
+- liztio
+- chuckha
+- detiber
+- dixudx
+- rosti
+- yagonobre
+# Might want to add @xiangpengzhao and @stealthybox back in the future
+labels: 
+- area/kubeadm
+- sig/cluster-lifecycle

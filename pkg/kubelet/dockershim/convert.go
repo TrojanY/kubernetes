@@ -21,16 +21,16 @@ import (
 	"strings"
 	"time"
 
-	dockertypes "github.com/docker/engine-api/types"
+	dockertypes "github.com/docker/docker/api/types"
 
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
 	"k8s.io/kubernetes/pkg/kubelet/dockershim/libdocker"
 )
 
 // This file contains helper functions to convert docker API types to runtime
 // API types, or vice versa.
 
-func imageToRuntimeAPIImage(image *dockertypes.Image) (*runtimeapi.Image, error) {
+func imageToRuntimeAPIImage(image *dockertypes.ImageSummary) (*runtimeapi.Image, error) {
 	if image == nil {
 		return nil, fmt.Errorf("unable to convert a nil pointer to a runtime API image")
 	}
@@ -164,13 +164,14 @@ func containerToRuntimeAPISandbox(c *dockertypes.Container) (*runtimeapi.PodSand
 	}, nil
 }
 
-func checkpointToRuntimeAPISandbox(id string, checkpoint *PodSandboxCheckpoint) *runtimeapi.PodSandbox {
+func checkpointToRuntimeAPISandbox(id string, checkpoint DockershimCheckpoint) *runtimeapi.PodSandbox {
 	state := runtimeapi.PodSandboxState_SANDBOX_NOTREADY
+	_, name, namespace, _, _ := checkpoint.GetData()
 	return &runtimeapi.PodSandbox{
 		Id: id,
 		Metadata: &runtimeapi.PodSandboxMetadata{
-			Name:      checkpoint.Name,
-			Namespace: checkpoint.Namespace,
+			Name:      name,
+			Namespace: namespace,
 		},
 		State: state,
 	}

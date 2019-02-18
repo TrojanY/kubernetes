@@ -27,12 +27,13 @@ import (
 	"net"
 	"testing"
 
+	authorization "k8s.io/api/authorization/v1beta1"
+	capi "k8s.io/api/certificates/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/fake"
 	testclient "k8s.io/client-go/testing"
-	authorization "k8s.io/kubernetes/pkg/apis/authorization/v1beta1"
-	capi "k8s.io/kubernetes/pkg/apis/certificates/v1beta1"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset/fake"
+	k8s_certificates_v1beta1 "k8s.io/kubernetes/pkg/apis/certificates/v1beta1"
 )
 
 func TestHasKubeletUsages(t *testing.T) {
@@ -85,9 +86,9 @@ func TestHasKubeletUsages(t *testing.T) {
 
 func TestHandle(t *testing.T) {
 	cases := []struct {
-		message    string
 		allowed    bool
 		recognized bool
+		err        bool
 		verify     func(*testing.T, []testclient.Action)
 	}{
 		{
@@ -118,6 +119,7 @@ func TestHandle(t *testing.T) {
 				}
 				_ = as[0].(testclient.CreateActionImpl)
 			},
+			err: true,
 		},
 		{
 			recognized: true,
@@ -154,7 +156,7 @@ func TestHandle(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		t.Run(fmt.Sprintf("recognized:%v,allowed: %v", c.recognized, c.allowed), func(t *testing.T) {
+		t.Run(fmt.Sprintf("recognized:%v,allowed: %v,err: %v", c.recognized, c.allowed, c.err), func(t *testing.T) {
 			client := &fake.Clientset{}
 			client.AddReactor("create", "subjectaccessreviews", func(action testclient.Action) (handled bool, ret runtime.Object, err error) {
 				return true, &authorization.SubjectAccessReview{
@@ -176,7 +178,7 @@ func TestHandle(t *testing.T) {
 				},
 			}
 			csr := makeTestCsr()
-			if err := approver.handle(csr); err != nil {
+			if err := approver.handle(csr); err != nil && !c.err {
 				t.Errorf("unexpected err: %v", err)
 			}
 			c.verify(t, client.Actions())
@@ -240,7 +242,7 @@ func testRecognizer(t *testing.T, cases []func(b *csrBuilder), recognizeFunc fun
 		c(&b)
 		t.Run(fmt.Sprintf("csr:%#v", b), func(t *testing.T) {
 			csr := makeFancyTestCsr(b)
-			x509cr, err := capi.ParseCSR(csr)
+			x509cr, err := k8s_certificates_v1beta1.ParseCSR(csr)
 			if err != nil {
 				t.Errorf("unexpected err: %v", err)
 			}

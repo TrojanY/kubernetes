@@ -20,40 +20,42 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/golang/glog"
 	"github.com/pborman/uuid"
+	"k8s.io/klog"
 
 	"reflect"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
-	"k8s.io/apiserver/pkg/apis/audit"
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
-	authenticationv1 "k8s.io/client-go/pkg/apis/authentication/v1"
+)
+
+const (
+	maxUserAgentLength      = 1024
+	userAgentTruncateSuffix = "...TRUNCATED"
 )
 
 func NewEventFromRequest(req *http.Request, level auditinternal.Level, attribs authorizer.Attributes) (*auditinternal.Event, error) {
 	ev := &auditinternal.Event{
-		Timestamp:  metav1.NewTime(time.Now()),
-		Verb:       attribs.GetVerb(),
-		RequestURI: req.URL.RequestURI(),
+		RequestReceivedTimestamp: metav1.NewMicroTime(time.Now()),
+		Verb:                     attribs.GetVerb(),
+		RequestURI:               req.URL.RequestURI(),
+		UserAgent:                maybeTruncateUserAgent(req),
+		Level:                    level,
 	}
-
-	ev.Level = level
 
 	// prefer the id from the headers. If not available, create a new one.
 	// TODO(audit): do we want to forbid the header for non-front-proxy users?
-	ids := req.Header[auditinternal.HeaderAuditID]
-	if len(ids) > 0 {
-		ev.AuditID = types.UID(ids[0])
+	ids := req.Header.Get(auditinternal.HeaderAuditID)
+	if ids != "" {
+		ev.AuditID = types.UID(ids)
 	} else {
 		ev.AuditID = types.UID(uuid.NewRandom().String())
 	}
@@ -74,58 +76,48 @@ func NewEventFromRequest(req *http.Request, level auditinternal.Level, attribs a
 		ev.User.UID = user.GetUID()
 	}
 
-	if asuser := req.Header.Get(authenticationv1.ImpersonateUserHeader); len(asuser) > 0 {
-		ev.ImpersonatedUser = &auditinternal.UserInfo{
-			Username: asuser,
-		}
-		if requestedGroups := req.Header[authenticationv1.ImpersonateGroupHeader]; len(requestedGroups) > 0 {
-			ev.ImpersonatedUser.Groups = requestedGroups
-		}
-
-		ev.ImpersonatedUser.Extra = map[string]auditinternal.ExtraValue{}
-		for k, v := range req.Header {
-			if !strings.HasPrefix(k, authenticationv1.ImpersonateUserExtraHeaderPrefix) {
-				continue
-			}
-			k = k[len(authenticationv1.ImpersonateUserExtraHeaderPrefix):]
-			ev.ImpersonatedUser.Extra[k] = auditinternal.ExtraValue(v)
-		}
-	}
-
 	if attribs.IsResourceRequest() {
 		ev.ObjectRef = &auditinternal.ObjectReference{
 			Namespace:   attribs.GetNamespace(),
 			Name:        attribs.GetName(),
 			Resource:    attribs.GetResource(),
 			Subresource: attribs.GetSubresource(),
-			APIVersion:  attribs.GetAPIGroup() + "/" + attribs.GetAPIVersion(),
+			APIGroup:    attribs.GetAPIGroup(),
+			APIVersion:  attribs.GetAPIVersion(),
 		}
 	}
 
 	return ev, nil
 }
 
-// LogRequestObject fills in the request object into an audit event. The passed runtime.Object
-// will be converted to the given gv.
-func LogRequestObject(ae *audit.Event, obj runtime.Object, gv schema.GroupVersion, s runtime.NegotiatedSerializer) {
-	if ae == nil || ae.Level.Less(audit.LevelRequest) {
+// LogImpersonatedUser fills in the impersonated user attributes into an audit event.
+func LogImpersonatedUser(ae *auditinternal.Event, user user.Info) {
+	if ae == nil || ae.Level.Less(auditinternal.LevelMetadata) {
 		return
 	}
+	ae.ImpersonatedUser = &auditinternal.UserInfo{
+		Username: user.GetName(),
+	}
+	ae.ImpersonatedUser.Groups = user.GetGroups()
+	ae.ImpersonatedUser.UID = user.GetUID()
+	ae.ImpersonatedUser.Extra = map[string]auditinternal.ExtraValue{}
+	for k, v := range user.GetExtra() {
+		ae.ImpersonatedUser.Extra[k] = auditinternal.ExtraValue(v)
+	}
+}
 
-	// TODO(audit): hook into the serializer to avoid double conversion
-	var err error
-	ae.RequestObject, err = encodeObject(obj, gv, s)
-	if err != nil {
-		// TODO(audit): add error slice to audit event struct
-		glog.Warningf("Auditing failed of %v request: %v", reflect.TypeOf(obj).Name(), err)
+// LogRequestObject fills in the request object into an audit event. The passed runtime.Object
+// will be converted to the given gv.
+func LogRequestObject(ae *auditinternal.Event, obj runtime.Object, gvr schema.GroupVersionResource, subresource string, s runtime.NegotiatedSerializer) {
+	if ae == nil || ae.Level.Less(auditinternal.LevelMetadata) {
 		return
 	}
 
 	// complete ObjectRef
 	if ae.ObjectRef == nil {
-		ae.ObjectRef = &audit.ObjectReference{}
+		ae.ObjectRef = &auditinternal.ObjectReference{}
 	}
-	if acc, ok := obj.(v1.ObjectMetaAccessor); ok {
+	if acc, ok := obj.(metav1.ObjectMetaAccessor); ok {
 		meta := acc.GetObjectMeta()
 		if len(ae.ObjectRef.Namespace) == 0 {
 			ae.ObjectRef.Namespace = meta.GetNamespace()
@@ -140,11 +132,34 @@ func LogRequestObject(ae *audit.Event, obj runtime.Object, gv schema.GroupVersio
 			ae.ObjectRef.ResourceVersion = meta.GetResourceVersion()
 		}
 	}
+	if len(ae.ObjectRef.APIVersion) == 0 {
+		ae.ObjectRef.APIGroup = gvr.Group
+		ae.ObjectRef.APIVersion = gvr.Version
+	}
+	if len(ae.ObjectRef.Resource) == 0 {
+		ae.ObjectRef.Resource = gvr.Resource
+	}
+	if len(ae.ObjectRef.Subresource) == 0 {
+		ae.ObjectRef.Subresource = subresource
+	}
+
+	if ae.Level.Less(auditinternal.LevelRequest) {
+		return
+	}
+
+	// TODO(audit): hook into the serializer to avoid double conversion
+	var err error
+	ae.RequestObject, err = encodeObject(obj, gvr.GroupVersion(), s)
+	if err != nil {
+		// TODO(audit): add error slice to audit event struct
+		klog.Warningf("Auditing failed of %v request: %v", reflect.TypeOf(obj).Name(), err)
+		return
+	}
 }
 
-// LogRquestPatch fills in the given patch as the request object into an audit event.
-func LogRequestPatch(ae *audit.Event, patch []byte) {
-	if ae == nil || ae.Level.Less(audit.LevelRequest) {
+// LogRequestPatch fills in the given patch as the request object into an audit event.
+func LogRequestPatch(ae *auditinternal.Event, patch []byte) {
+	if ae == nil || ae.Level.Less(auditinternal.LevelRequest) {
 		return
 	}
 
@@ -156,20 +171,27 @@ func LogRequestPatch(ae *audit.Event, patch []byte) {
 
 // LogResponseObject fills in the response object into an audit event. The passed runtime.Object
 // will be converted to the given gv.
-func LogResponseObject(ae *audit.Event, obj runtime.Object, gv schema.GroupVersion, s runtime.NegotiatedSerializer) {
-	if ae == nil || ae.Level.Less(audit.LevelRequestResponse) {
+func LogResponseObject(ae *auditinternal.Event, obj runtime.Object, gv schema.GroupVersion, s runtime.NegotiatedSerializer) {
+	if ae == nil || ae.Level.Less(auditinternal.LevelMetadata) {
 		return
 	}
-
 	if status, ok := obj.(*metav1.Status); ok {
-		ae.ResponseStatus = status
+		// selectively copy the bounded fields.
+		ae.ResponseStatus = &metav1.Status{
+			Status: status.Status,
+			Reason: status.Reason,
+			Code:   status.Code,
+		}
 	}
 
+	if ae.Level.Less(auditinternal.LevelRequestResponse) {
+		return
+	}
 	// TODO(audit): hook into the serializer to avoid double conversion
 	var err error
 	ae.ResponseObject, err = encodeObject(obj, gv, s)
 	if err != nil {
-		glog.Warningf("Audit failed for %q response: %v", reflect.TypeOf(obj).Name(), err)
+		klog.Warningf("Audit failed for %q response: %v", reflect.TypeOf(obj).Name(), err)
 	}
 }
 
@@ -190,4 +212,39 @@ func encodeObject(obj runtime.Object, gv schema.GroupVersion, serializer runtime
 		}
 	}
 	return nil, fmt.Errorf("no json encoder found")
+}
+
+// LogAnnotation fills in the Annotations according to the key value pair.
+func LogAnnotation(ae *auditinternal.Event, key, value string) {
+	if ae == nil || ae.Level.Less(auditinternal.LevelMetadata) {
+		return
+	}
+	if ae.Annotations == nil {
+		ae.Annotations = make(map[string]string)
+	}
+	if v, ok := ae.Annotations[key]; ok && v != value {
+		klog.Warningf("Failed to set annotations[%q] to %q for audit:%q, it has already been set to %q", key, value, ae.AuditID, ae.Annotations[key])
+		return
+	}
+	ae.Annotations[key] = value
+}
+
+// LogAnnotations fills in the Annotations according to the annotations map.
+func LogAnnotations(ae *auditinternal.Event, annotations map[string]string) {
+	if ae == nil || ae.Level.Less(auditinternal.LevelMetadata) {
+		return
+	}
+	for key, value := range annotations {
+		LogAnnotation(ae, key, value)
+	}
+}
+
+// truncate User-Agent if too long, otherwise return it directly.
+func maybeTruncateUserAgent(req *http.Request) string {
+	ua := req.UserAgent()
+	if len(ua) > maxUserAgentLength {
+		ua = ua[:maxUserAgentLength] + userAgentTruncateSuffix
+	}
+
+	return ua
 }

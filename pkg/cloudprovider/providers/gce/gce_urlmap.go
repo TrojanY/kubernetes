@@ -17,73 +17,60 @@ limitations under the License.
 package gce
 
 import (
-	"net/http"
-	"time"
-
 	compute "google.golang.org/api/compute/v1"
+
+	"github.com/GoogleCloudPlatform/k8s-cloud-provider/pkg/cloud"
+	"github.com/GoogleCloudPlatform/k8s-cloud-provider/pkg/cloud/filter"
+	"github.com/GoogleCloudPlatform/k8s-cloud-provider/pkg/cloud/meta"
 )
 
-func newUrlMapMetricContext(request string) *metricContext {
-	return &metricContext{
-		start:      time.Now(),
-		attributes: []string{"urlmap_" + request, unusedMetricLabel, unusedMetricLabel},
-	}
+func newURLMapMetricContext(request string) *metricContext {
+	return newGenericMetricContext("urlmap", request, unusedMetricLabel, unusedMetricLabel, computeV1Version)
 }
 
-// GetUrlMap returns the UrlMap by name.
-func (gce *GCECloud) GetUrlMap(name string) (*compute.UrlMap, error) {
-	mc := newUrlMapMetricContext("get")
-	v, err := gce.service.UrlMaps.Get(gce.projectID, name).Do()
+// GetURLMap returns the UrlMap by name.
+func (g *Cloud) GetURLMap(name string) (*compute.UrlMap, error) {
+	ctx, cancel := cloud.ContextWithCallTimeout()
+	defer cancel()
+
+	mc := newURLMapMetricContext("get")
+	v, err := g.c.UrlMaps().Get(ctx, meta.GlobalKey(name))
 	return v, mc.Observe(err)
 }
 
-// CreateUrlMap creates an url map, using the given backend service as the default service.
-func (gce *GCECloud) CreateUrlMap(backend *compute.BackendService, name string) (*compute.UrlMap, error) {
-	urlMap := &compute.UrlMap{
-		Name:           name,
-		DefaultService: backend.SelfLink,
-	}
-	mc := newUrlMapMetricContext("create")
-	op, err := gce.service.UrlMaps.Insert(gce.projectID, urlMap).Do()
-	if err != nil {
-		return nil, mc.Observe(err)
-	}
-	if err = gce.waitForGlobalOp(op, mc); err != nil {
-		return nil, err
-	}
-	return gce.GetUrlMap(name)
+// CreateURLMap creates a url map
+func (g *Cloud) CreateURLMap(urlMap *compute.UrlMap) error {
+	ctx, cancel := cloud.ContextWithCallTimeout()
+	defer cancel()
+
+	mc := newURLMapMetricContext("create")
+	return mc.Observe(g.c.UrlMaps().Insert(ctx, meta.GlobalKey(urlMap.Name), urlMap))
 }
 
-// UpdateUrlMap applies the given UrlMap as an update, and returns the new UrlMap.
-func (gce *GCECloud) UpdateUrlMap(urlMap *compute.UrlMap) (*compute.UrlMap, error) {
-	mc := newUrlMapMetricContext("update")
-	op, err := gce.service.UrlMaps.Update(gce.projectID, urlMap.Name, urlMap).Do()
-	if err != nil {
-		return nil, mc.Observe(err)
-	}
-	if err = gce.waitForGlobalOp(op, mc); err != nil {
-		return nil, err
-	}
-	return gce.service.UrlMaps.Get(gce.projectID, urlMap.Name).Do()
+// UpdateURLMap applies the given UrlMap as an update
+func (g *Cloud) UpdateURLMap(urlMap *compute.UrlMap) error {
+	ctx, cancel := cloud.ContextWithCallTimeout()
+	defer cancel()
+
+	mc := newURLMapMetricContext("update")
+	return mc.Observe(g.c.UrlMaps().Update(ctx, meta.GlobalKey(urlMap.Name), urlMap))
 }
 
-// DeleteUrlMap deletes a url map by name.
-func (gce *GCECloud) DeleteUrlMap(name string) error {
-	mc := newUrlMapMetricContext("delete")
-	op, err := gce.service.UrlMaps.Delete(gce.projectID, name).Do()
-	if err != nil {
-		if isHTTPErrorCode(err, http.StatusNotFound) {
-			return nil
-		}
-		return mc.Observe(err)
-	}
-	return gce.waitForGlobalOp(op, mc)
+// DeleteURLMap deletes a url map by name.
+func (g *Cloud) DeleteURLMap(name string) error {
+	ctx, cancel := cloud.ContextWithCallTimeout()
+	defer cancel()
+
+	mc := newURLMapMetricContext("delete")
+	return mc.Observe(g.c.UrlMaps().Delete(ctx, meta.GlobalKey(name)))
 }
 
-// ListUrlMaps lists all UrlMaps in the project.
-func (gce *GCECloud) ListUrlMaps() (*compute.UrlMapList, error) {
-	mc := newUrlMapMetricContext("list")
-	// TODO: use PageToken to list all not just the first 500
-	v, err := gce.service.UrlMaps.List(gce.projectID).Do()
+// ListURLMaps lists all UrlMaps in the project.
+func (g *Cloud) ListURLMaps() ([]*compute.UrlMap, error) {
+	ctx, cancel := cloud.ContextWithCallTimeout()
+	defer cancel()
+
+	mc := newURLMapMetricContext("list")
+	v, err := g.c.UrlMaps().List(ctx, filter.None)
 	return v, mc.Observe(err)
 }

@@ -19,9 +19,9 @@ package audit
 import (
 	"fmt"
 
-	"github.com/golang/glog"
 	"github.com/prometheus/client_golang/prometheus"
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
+	"k8s.io/klog"
 )
 
 const (
@@ -32,13 +32,13 @@ var (
 	eventCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Subsystem: subsystem,
-			Name:      "event_count",
+			Name:      "event_total",
 			Help:      "Counter of audit events generated and sent to the audit backend.",
 		})
 	errorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Subsystem: subsystem,
-			Name:      "error_count",
+			Name:      "error_total",
 			Help: "Counter of audit events that failed to be audited properly. " +
 				"Plugin identifies the plugin affected by the error.",
 		},
@@ -47,10 +47,19 @@ var (
 	levelCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Subsystem: subsystem,
-			Name:      "level_count",
+			Name:      "level_total",
 			Help:      "Counter of policy levels for audit events (1 per request).",
 		},
 		[]string{"level"},
+	)
+
+	ApiserverAuditDroppedCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem: subsystem,
+			Name:      "requests_rejected_total",
+			Help: "Counter of apiserver requests rejected due to an error " +
+				"in audit logging backend.",
+		},
 	)
 )
 
@@ -58,6 +67,7 @@ func init() {
 	prometheus.MustRegister(eventCounter)
 	prometheus.MustRegister(errorCounter)
 	prometheus.MustRegister(levelCounter)
+	prometheus.MustRegister(ApiserverAuditDroppedCounter)
 }
 
 // ObserveEvent updates the relevant prometheus metrics for the generated audit event.
@@ -72,7 +82,7 @@ func ObservePolicyLevel(level auditinternal.Level) {
 
 // HandlePluginError handles an error that occurred in an audit plugin. This method should only be
 // used if the error may have prevented the audit event from being properly recorded. The events are
-// modified.
+// logged to the debug log.
 func HandlePluginError(plugin string, err error, impacted ...*auditinternal.Event) {
 	// Count the error.
 	errorCounter.WithLabelValues(plugin).Add(float64(len(impacted)))
@@ -83,5 +93,5 @@ func HandlePluginError(plugin string, err error, impacted ...*auditinternal.Even
 	for _, ev := range impacted {
 		msg = msg + EventString(ev) + "\n"
 	}
-	glog.Error(msg)
+	klog.Error(msg)
 }

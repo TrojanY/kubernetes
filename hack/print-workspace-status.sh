@@ -20,7 +20,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-export KUBE_ROOT=$(dirname "${BASH_SOURCE}")/..
+KUBE_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
 
 source "${KUBE_ROOT}/hack/lib/version.sh"
 kube::version::get_version_vars
@@ -29,6 +29,8 @@ kube::version::get_version_vars
 # instead of volatile-status.txt.
 # Stamped rules will be retriggered by changes to stable-status.txt, but not by
 # changes to volatile-status.txt.
+# IMPORTANT: the camelCase vars should match the lists in hack/lib/version.sh
+# and pkg/version/def.bzl.
 cat <<EOF
 STABLE_BUILD_GIT_COMMIT ${KUBE_GIT_COMMIT-}
 STABLE_BUILD_SCM_STATUS ${KUBE_GIT_TREE_STATE-}
@@ -41,5 +43,7 @@ gitTreeState ${KUBE_GIT_TREE_STATE-}
 gitVersion ${KUBE_GIT_VERSION-}
 gitMajor ${KUBE_GIT_MAJOR-}
 gitMinor ${KUBE_GIT_MINOR-}
-buildDate $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+buildDate $(date \
+  ${SOURCE_DATE_EPOCH:+"--date=@${SOURCE_DATE_EPOCH}"} \
+ -u +'%Y-%m-%dT%H:%M:%SZ')
 EOF

@@ -17,13 +17,17 @@ limitations under the License.
 package validation
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/kubernetes/pkg/api"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utilfeaturetesting "k8s.io/apiserver/pkg/util/feature/testing"
 	"k8s.io/kubernetes/pkg/apis/batch"
+	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/features"
 )
 
 func getValidManualSelector() *metav1.LabelSelector {
@@ -62,6 +66,12 @@ func getValidPodTemplateSpecForGenerated(selector *metav1.LabelSelector) api.Pod
 			Containers:    []api.Container{{Name: "abc", Image: "image", ImagePullPolicy: "IfNotPresent", TerminationMessagePolicy: api.TerminationMessageReadFile}},
 		},
 	}
+}
+
+func featureToggle(feature utilfeature.Feature) []string {
+	enabled := fmt.Sprintf("%s=%t", feature, true)
+	disabled := fmt.Sprintf("%s=%t", feature, false)
+	return []string{enabled, disabled}
 }
 
 func TestValidateJob(t *testing.T) {
@@ -214,15 +224,36 @@ func TestValidateJob(t *testing.T) {
 		},
 	}
 
-	for k, v := range errorCases {
-		errs := ValidateJob(&v)
-		if len(errs) == 0 {
-			t.Errorf("expected failure for %s", k)
+	for _, setFeature := range []bool{true, false} {
+		defer utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.TTLAfterFinished, setFeature)()
+		ttlCase := "spec.ttlSecondsAfterFinished:must be greater than or equal to 0"
+		if utilfeature.DefaultFeatureGate.Enabled(features.TTLAfterFinished) {
+			errorCases[ttlCase] = batch.Job{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "myjob",
+					Namespace: metav1.NamespaceDefault,
+					UID:       types.UID("1a2b3c"),
+				},
+				Spec: batch.JobSpec{
+					TTLSecondsAfterFinished: &negative,
+					Selector:                validGeneratedSelector,
+					Template:                validPodTemplateSpecForGenerated,
+				},
+			}
 		} else {
-			s := strings.Split(k, ":")
-			err := errs[0]
-			if err.Field != s[0] || !strings.Contains(err.Error(), s[1]) {
-				t.Errorf("unexpected error: %v, expected: %s", err, k)
+			delete(errorCases, ttlCase)
+		}
+
+		for k, v := range errorCases {
+			errs := ValidateJob(&v)
+			if len(errs) == 0 {
+				t.Errorf("expected failure for %s", k)
+			} else {
+				s := strings.Split(k, ":")
+				err := errs[0]
+				if err.Field != s[0] || !strings.Contains(err.Error(), s[1]) {
+					t.Errorf("unexpected error: %v, expected: %s", err, k)
+				}
 			}
 		}
 	}
@@ -345,6 +376,14 @@ func TestValidateCronJob(t *testing.T) {
 	}
 	for k, v := range successCases {
 		if errs := ValidateCronJob(&v); len(errs) != 0 {
+			t.Errorf("expected success for %s: %v", k, errs)
+		}
+
+		// Update validation should pass same success cases
+		// copy to avoid polluting the testcase object, set a resourceVersion to allow validating update, and test a no-op update
+		v = *v.DeepCopy()
+		v.ResourceVersion = "1"
+		if errs := ValidateCronJobUpdate(&v, &v); len(errs) != 0 {
 			t.Errorf("expected success for %s: %v", k, errs)
 		}
 	}
@@ -520,6 +559,22 @@ func TestValidateCronJob(t *testing.T) {
 				},
 			},
 		},
+		"metadata.name: must be no more than 52 characters": {
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "10000000002000000000300000000040000000005000000000123",
+				Namespace: metav1.NamespaceDefault,
+				UID:       types.UID("1a2b3c"),
+			},
+			Spec: batch.CronJobSpec{
+				Schedule:          "* * * * ?",
+				ConcurrencyPolicy: batch.AllowConcurrent,
+				JobTemplate: batch.JobTemplateSpec{
+					Spec: batch.JobSpec{
+						Template: validPodTemplateSpec,
+					},
+				},
+			},
+		},
 		"spec.jobTemplate.spec.manualSelector: Unsupported value": {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "mycronjob",
@@ -560,10 +615,47 @@ func TestValidateCronJob(t *testing.T) {
 			},
 		},
 	}
+	if utilfeature.DefaultFeatureGate.Enabled(features.TTLAfterFinished) {
+		errorCases["spec.jobTemplate.spec.ttlSecondsAfterFinished:must be greater than or equal to 0"] = batch.CronJob{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mycronjob",
+				Namespace: metav1.NamespaceDefault,
+				UID:       types.UID("1a2b3c"),
+			},
+			Spec: batch.CronJobSpec{
+				Schedule:          "* * * * ?",
+				ConcurrencyPolicy: batch.AllowConcurrent,
+				JobTemplate: batch.JobTemplateSpec{
+					Spec: batch.JobSpec{
+						TTLSecondsAfterFinished: &negative,
+						Template:                validPodTemplateSpec,
+					},
+				},
+			},
+		}
+	}
 
 	for k, v := range errorCases {
 		errs := ValidateCronJob(&v)
 		if len(errs) == 0 {
+			t.Errorf("expected failure for %s", k)
+		} else {
+			s := strings.Split(k, ":")
+			err := errs[0]
+			if err.Field != s[0] || !strings.Contains(err.Error(), s[1]) {
+				t.Errorf("unexpected error: %v, expected: %s", err, k)
+			}
+		}
+
+		// Update validation should fail all failure cases other than the 52 character name limit
+		// copy to avoid polluting the testcase object, set a resourceVersion to allow validating update, and test a no-op update
+		v = *v.DeepCopy()
+		v.ResourceVersion = "1"
+		errs = ValidateCronJobUpdate(&v, &v)
+		if len(errs) == 0 {
+			if k == "metadata.name: must be no more than 52 characters" {
+				continue
+			}
 			t.Errorf("expected failure for %s", k)
 		} else {
 			s := strings.Split(k, ":")

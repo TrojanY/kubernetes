@@ -17,8 +17,8 @@ limitations under the License.
 package upgrades
 
 import (
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 
 	. "github.com/onsi/ginkgo"
@@ -77,7 +77,7 @@ func (t *ServiceUpgradeTest) Setup(f *framework.Framework) {
 // Test runs a connectivity check to the service.
 func (t *ServiceUpgradeTest) Test(f *framework.Framework, done <-chan struct{}, upgrade UpgradeType) {
 	switch upgrade {
-	case MasterUpgrade:
+	case MasterUpgrade, ClusterUpgrade:
 		t.test(f, done, true)
 	case NodeUpgrade:
 		// Node upgrades should test during disruption only on GCE/GKE for now.

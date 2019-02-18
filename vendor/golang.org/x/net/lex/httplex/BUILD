@@ -1,16 +1,11 @@
-package(default_visibility = ["//visibility:public"])
-
-licenses(["notice"])
-
-load(
-    "@io_bazel_rules_go//go:def.bzl",
-    "go_library",
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "go_default_library",
     srcs = ["httplex.go"],
-    tags = ["automanaged"],
+    importmap = "k8s.io/kubernetes/vendor/golang.org/x/net/lex/httplex",
+    importpath = "golang.org/x/net/lex/httplex",
+    visibility = ["//visibility:public"],
     deps = ["//vendor/golang.org/x/net/idna:go_default_library"],
 )
 
@@ -25,4 +20,5 @@ filegroup(
     name = "all-srcs",
     srcs = [":package-srcs"],
     tags = ["automanaged"],
+    visibility = ["//visibility:public"],
 )

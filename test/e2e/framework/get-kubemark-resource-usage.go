@@ -39,10 +39,10 @@ func getMasterUsageByPrefix(prefix string) (string, error) {
 // TODO: figure out how to move this to kubemark directory (need to factor test SSH out of e2e framework)
 func GetKubemarkMasterComponentsResourceUsage() map[string]*KubemarkResourceUsage {
 	result := make(map[string]*KubemarkResourceUsage)
-	// Get kuberenetes component resource usage
+	// Get kubernetes component resource usage
 	sshResult, err := getMasterUsageByPrefix("kube")
 	if err != nil {
-		Logf("Error when trying to SSH to master machine. Skipping probe")
+		Logf("Error when trying to SSH to master machine. Skipping probe. %v", err)
 		return nil
 	}
 	scanner := bufio.NewScanner(strings.NewReader(sshResult))

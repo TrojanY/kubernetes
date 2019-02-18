@@ -46,15 +46,18 @@ GENERATED_FILE_PREFIX := zz_generated.
 # Metadata for driving the build lives here.
 META_DIR := .make
 
-# Our build flags.
-# TODO(thockin): it would be nice to just use the native flags.  Can we EOL
-#                these "wrapper" flags?
-KUBE_GOFLAGS := $(GOFLAGS)
-KUBE_GOLDFLAGS := $(GOLDFLAGS)
-KUBE_GOGCFLAGS = $(GOGCFLAGS)
+ifdef KUBE_GOFLAGS
+$(info KUBE_GOFLAGS is now deprecated. Please use GOFLAGS instead.)
+ifndef GOFLAGS
+GOFLAGS := $(KUBE_GOFLAGS)
+unexport KUBE_GOFLAGS
+else
+$(error Both KUBE_GOFLAGS and GOFLAGS are set. Please use just GOFLAGS)
+endif
+endif
 
 # Extra options for the release or quick-release options:
-KUBE_RELEASE_RUN_TESTS := $(KUBE_RELEASE_RUN_TESTS) 
+KUBE_RELEASE_RUN_TESTS := $(KUBE_RELEASE_RUN_TESTS)
 KUBE_FASTBUILD := $(KUBE_FASTBUILD)
 
 # This controls the verbosity of the build.  Higher numbers mean more output.
@@ -109,19 +112,35 @@ define VERIFY_HELP_INFO
 #
 # Args:
 #   BRANCH: Branch to be passed to verify-godeps.sh script.
+#   WHAT: List of checks to run
 #
 # Example:
 #   make verify
 #   make verify BRANCH=branch_x
+#   make verify WHAT="bazel typecheck"
 endef
 .PHONY: verify
 ifeq ($(PRINT_HELP),y)
 verify:
 	@echo "$$VERIFY_HELP_INFO"
 else
-verify: verify_generated_files
-	KUBE_VERIFY_GIT_BRANCH=$(BRANCH) hack/make-rules/verify.sh -v
-	hack/make-rules/vet.sh
+verify:
+	KUBE_VERIFY_GIT_BRANCH=$(BRANCH) hack/make-rules/verify.sh
+endif
+
+define QUICK_VERIFY_HELP_INFO
+# Runs only the presubmission verifications that aren't slow.
+#
+# Example:
+#   make quick-verify
+endef
+.PHONY: quick-verify
+ifeq ($(PRINT_HELP),y)
+quick-verify:
+	@echo "$$QUICK_VERIFY_HELP_INFO"
+else
+quick-verify:
+	QUICK=true SILENT=false hack/make-rules/verify.sh
 endif
 
 define UPDATE_HELP_INFO
@@ -132,11 +151,11 @@ define UPDATE_HELP_INFO
 endef
 .PHONY: update
 ifeq ($(PRINT_HELP),y)
-update:
+update: generated_files
 	@echo "$$UPDATE_HELP_INFO"
 else
 update:
-	hack/update-all.sh
+	CALLED_FROM_MAIN_MAKEFILE=1 hack/make-rules/update.sh
 endif
 
 define CHECK_TEST_HELP_INFO
@@ -146,6 +165,7 @@ define CHECK_TEST_HELP_INFO
 #   WHAT: Directory names to test.  All *_test.go files under these
 #     directories will be run.  If not specified, "everything" will be tested.
 #   TESTS: Same as WHAT.
+#   KUBE_COVER: Whether to run tests with code coverage. Set to 'y' to enable coverage collection.
 #   GOFLAGS: Extra flags to pass to 'go' when building.
 #   GOLDFLAGS: Extra linking flags to pass to 'go' when building.
 #   GOGCFLAGS: Additional go compile flags passed to 'go' when building.
@@ -195,7 +215,7 @@ test-e2e:
 	@echo "$$TEST_E2E_HELP_INFO"
 else
 test-e2e: ginkgo generated_files
-	go run hack/e2e.go -- -v --build --up --test --down
+	go run hack/e2e.go -- --build --up --test --down
 endif
 
 define TEST_E2E_NODE_HELP_INFO
@@ -231,13 +251,18 @@ define TEST_E2E_NODE_HELP_INFO
 #  GUBERNATOR: For REMOTE=true only. Produce link to Gubernator to view logs.
 #	 Defaults to false.
 #  PARALLELISM: The number of gingko nodes to run.  Defaults to 8.
-#  RUNTIME: Container runtime to use (eg. docker, rkt, remote).
+#  RUNTIME: Container runtime to use (eg. docker, remote).
 #    Defaults to "docker".
 #  CONTAINER_RUNTIME_ENDPOINT: remote container endpoint to connect to.
 #   Used when RUNTIME is set to "remote".
 #  IMAGE_SERVICE_ENDPOINT: remote image endpoint to connect to, to prepull images.
 #   Used when RUNTIME is set to "remote".
 #  IMAGE_CONFIG_FILE: path to a file containing image configuration.
+#  SYSTEM_SPEC_NAME: The name of the system spec to be used for validating the
+#    image in the node conformance test. The specs are located at
+#    test/e2e_node/system/specs/. For example, "SYSTEM_SPEC_NAME=gke" will use
+#    the spec at test/e2e_node/system/specs/gke.yaml. If unspecified, the
+#    default built-in spec (system.DefaultSpec) will be used.
 #
 # Example:
 #   make test-e2e-node FOCUS=Kubelet SKIP=container
@@ -268,7 +293,6 @@ else
 test-cmd: generated_files
 	hack/make-rules/test-kubeadm-cmd.sh
 	hack/make-rules/test-cmd.sh
-	hack/make-rules/test-federation-cmd.sh
 endif
 
 define CLEAN_HELP_INFO
@@ -286,10 +310,7 @@ clean:
 else
 clean: clean_meta
 	build/make-clean.sh
-	rm -rf $(OUT_DIR)
-	rm -rf Godeps/_workspace # Just until we are sure it is gone
-	# TODO(thockin): Remove this when we call clean_generated.
-	rm -f pkg/generated/openapi/zz_generated.openapi.go
+	hack/make-rules/clean.sh
 endif
 
 define CLEAN_META_HELP_INFO
@@ -340,31 +361,56 @@ ifeq ($(PRINT_HELP),y)
 vet:
 	@echo "$$VET_HELP_INFO"
 else
-vet:
-	hack/make-rules/vet.sh $(WHAT)
+vet: generated_files
+	CALLED_FROM_MAIN_MAKEFILE=1 hack/make-rules/vet.sh $(WHAT)
 endif
 
 define RELEASE_HELP_INFO
 # Build a release
+# Use the 'release-in-a-container' target to build the release when already in
+# a container vs. creating a new container to build in using the 'release'
+# target.  Useful for running in GCB.
 #
 # Example:
 #   make release
+#   make release-in-a-container
 endef
-.PHONY: release
+.PHONY: release release-in-a-container
 ifeq ($(PRINT_HELP),y)
-release:
+release release-in-a-container:
 	@echo "$$RELEASE_HELP_INFO"
 else
 release:
 	build/release.sh
+release-in-a-container:
+	build/release-in-a-container.sh
+endif
+
+define RELEASE_IMAGES_HELP_INFO
+# Build release images
+#
+# Args:
+#   KUBE_BUILD_HYPERKUBE: Whether to build hyperkube image as well. Set to 'n' to skip.
+#   KUBE_BUILD_CONFORMANCE: Whether to build conformance testing image as well. Set to 'n' to skip.
+#
+# Example:
+#   make release-images
+endef
+.PHONY: release-images
+ifeq ($(PRINT_HELP),y)
+release-images:
+	@echo "$$RELEASE_IMAGES_HELP_INFO"
+else
+release-images:
+	build/release-images.sh
 endif
 
 define RELEASE_SKIP_TESTS_HELP_INFO
 # Build a release, but skip tests
-# 
+#
 # Args:
 #   KUBE_RELEASE_RUN_TESTS: Whether to run tests. Set to 'y' to run tests anyways.
-#   KUBE_FASTBUILD: Whether to cross-compile for other architectures. Set to 'true' to do so.
+#   KUBE_FASTBUILD: Whether to cross-compile for other architectures. Set to 'false' to do so.
 #
 # Example:
 #   make release-skip-tests
@@ -381,19 +427,68 @@ release-skip-tests quick-release:
 	build/release.sh
 endif
 
+define QUICK_RELEASE_IMAGES_HELP_INFO
+# Build release images, but only for linux/amd64
+#
+# Args:
+#   KUBE_FASTBUILD: Whether to cross-compile for other architectures. Set to 'false' to do so.
+#   KUBE_BUILD_HYPERKUBE: Whether to build hyperkube image as well. Set to 'n' to skip.
+#   KUBE_BUILD_CONFORMANCE: Whether to build conformance testing image as well. Set to 'n' to skip.
+#
+# Example:
+#   make quick-release-images
+endef
+.PHONY: quick-release-images
+ifeq ($(PRINT_HELP),y)
+quick-release-images:
+	@echo "$$QUICK_RELEASE_IMAGES_HELP_INFO"
+else
+quick-release-images: KUBE_FASTBUILD = true
+quick-release-images:
+	build/release-images.sh
+endif
+
+define PACKAGE_HELP_INFO
+# Package tarballs
+# Use the 'package-tarballs' target to run the final packaging steps of
+# a release.
+#
+# Example:
+#   make package-tarballs
+endef
+.PHONY: package package-tarballs
+ifeq ($(PRINT_HELP),y)
+package package-tarballs:
+	@echo "$$PACKAGE_HELP_INFO"
+else
+package package-tarballs:
+	build/package-tarballs.sh
+endif
+
 define CROSS_HELP_INFO
 # Cross-compile for all platforms
+# Use the 'cross-in-a-container' target to cross build when already in
+# a container vs. creating a new container to build from (build-image)
+# Useful for running in GCB.
 #
 # Example:
 #   make cross
+#   make cross-in-a-container
 endef
-.PHONY: cross
+.PHONY: cross cross-in-a-container
 ifeq ($(PRINT_HELP),y)
-cross:
+cross cross-in-a-container:
 	@echo "$$CROSS_HELP_INFO"
 else
 cross:
 	hack/make-rules/cross.sh
+cross-in-a-container: KUBE_OUTPUT_SUBPATH = $(OUT_DIR)/dockerized
+cross-in-a-container:
+ifeq (,$(wildcard /.dockerenv))
+	@echo -e "\nThe 'cross-in-a-container' target can only be used from within a docker container.\n"
+else
+	hack/make-rules/cross.sh
+endif
 endif
 
 define CMD_HELP_INFO
@@ -403,8 +498,7 @@ define CMD_HELP_INFO
 #   make kubectl kube-proxy
 endef
 #TODO: make EXCLUDE_TARGET auto-generated when there are other files in cmd/
-#TODO: should we exclude the target "libs" but include "cmd/libs/go2idl/*"?
-EXCLUDE_TARGET=OWNERS
+EXCLUDE_TARGET=BUILD OWNERS
 .PHONY: $(filter-out %$(EXCLUDE_TARGET),$(notdir $(abspath $(wildcard cmd/*/))))
 ifeq ($(PRINT_HELP),y)
 $(filter-out %$(EXCLUDE_TARGET),$(notdir $(abspath $(wildcard cmd/*/)))):
@@ -412,36 +506,6 @@ $(filter-out %$(EXCLUDE_TARGET),$(notdir $(abspath $(wildcard cmd/*/)))):
 else
 $(filter-out %$(EXCLUDE_TARGET),$(notdir $(abspath $(wildcard cmd/*/)))): generated_files
 	hack/make-rules/build.sh cmd/$@
-endif
-
-define PLUGIN_CMD_HELP_INFO
-# Add rules for all directories in plugin/cmd/
-#
-# Example:
-#   make kube-scheduler
-endef
-.PHONY: $(notdir $(abspath $(wildcard plugin/cmd/*/)))
-ifeq ($(PRINT_HELP),y)
-$(notdir $(abspath $(wildcard plugin/cmd/*/))):
-	@echo "$$PLUGIN_CMD_HELP_INFO"
-else
-$(notdir $(abspath $(wildcard plugin/cmd/*/))): generated_files
-	hack/make-rules/build.sh plugin/cmd/$@
-endif
-
-define FED_CMD_HELP_INFO
-# Add rules for all directories in federation/cmd/
-#
-# Example:
-#   make federation-apiserver federation-controller-manager
-endef
-.PHONY: $(notdir $(abspath $(wildcard federation/cmd/*/)))
-ifeq ($(PRINT_HELP),y)
-$(notdir $(abspath $(wildcard federation/cmd/*/))):
-	@echo "$$FED_CMD_HELP_INFO"
-else
-$(notdir $(abspath $(wildcard federation/cmd/*/))): generated_files
-	hack/make-rules/build.sh federation/cmd/$@
 endif
 
 define GENERATED_FILES_HELP_INFO
@@ -456,21 +520,6 @@ generated_files:
 	@echo "$$GENERATED_FILES_HELP_INFO"
 else
 generated_files:
-	$(MAKE) -f Makefile.generated_files $@ CALLED_FROM_MAIN_MAKEFILE=1
-endif
-
-define VERIFY_GENERATED_FILES_HELP_INFO
-# Verify auto-generated files needed for the build.
-#
-# Example:
-#   make verify_generated_files
-endef
-.PHONY: verify_generated_files
-ifeq ($(PRINT_HELP),y)
-verify_generated_files:
-	@echo "$$VERIFY_GENERATED_FILES_HELP_INFO"
-else
-verify_generated_files:
 	$(MAKE) -f Makefile.generated_files $@ CALLED_FROM_MAIN_MAKEFILE=1
 endif
 
@@ -502,8 +551,9 @@ endef
 bazel-build:
 	@echo "$$BAZEL_BUILD_HELP_INFO"
 else
+# Some things in vendor don't build due to empty target lists for cross-platform rules.
 bazel-build:
-	bazel build //cmd/... //pkg/... //federation/... //plugin/... //third_party/... //examples/... //test/... //vendor/k8s.io/...
+	bazel build -- //... -//vendor/...
 endif
 
 
@@ -517,19 +567,38 @@ endef
 bazel-test:
 	@echo "$$BAZEL_TEST_HELP_INFO"
 else
+# //hack:verify-all is a manual target.
+# Some things in vendor don't build due to empty target lists for cross-platform rules.
 bazel-test:
-	bazel test --test_tag_filters=-integration --flaky_test_attempts=3 //cmd/... //pkg/... //federation/... //plugin/... //third_party/... //hack/... //hack:verify-all //vendor/k8s.io/...
+	bazel test --config=unit -- \
+	  //... \
+	  //hack:verify-all \
+	  -//vendor/...
 endif
 
 ifeq ($(PRINT_HELP),y)
-define BAZEL_BUILD_HELP_INFO
+define BAZEL_TEST_INTEGRATION_HELP_INFO
+# Integration test with bazel
+#
+# Example:
+# make bazel-test-integration
+endef
+bazel-test-integration:
+	@echo "$$BAZEL_TEST_INTEGRATION_HELP_INFO"
+else
+bazel-test-integration:
+	bazel test --config integration //test/integration/...
+endif
+
+ifeq ($(PRINT_HELP),y)
+define BAZEL_RELEASE_HELP_INFO
 # Build release tars with bazel
 #
 # Example:
 # make bazel-release
 endef
 bazel-release:
-	@echo "$$BAZEL_BUILD_HELP_INFO"
+	@echo "$$BAZEL_RELEASE_HELP_INFO"
 else
 bazel-release:
 	bazel build //build/release-tars

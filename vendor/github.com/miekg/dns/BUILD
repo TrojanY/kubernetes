@@ -1,11 +1,4 @@
-package(default_visibility = ["//visibility:public"])
-
-licenses(["notice"])
-
-load(
-    "@io_bazel_rules_go//go:def.bzl",
-    "go_library",
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "go_default_library",
@@ -41,12 +34,17 @@ go_library(
         "types.go",
         "udp.go",
         "udp_linux.go",
+        "udp_other.go",
+        "udp_plan9.go",
+        "udp_windows.go",
         "update.go",
         "xfr.go",
         "zmsg.go",
         "ztypes.go",
     ],
-    tags = ["automanaged"],
+    importmap = "k8s.io/kubernetes/vendor/github.com/miekg/dns",
+    importpath = "github.com/miekg/dns",
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
@@ -60,4 +58,5 @@ filegroup(
     name = "all-srcs",
     srcs = [":package-srcs"],
     tags = ["automanaged"],
+    visibility = ["//visibility:public"],
 )

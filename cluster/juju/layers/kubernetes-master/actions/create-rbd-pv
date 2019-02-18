@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/local/sbin/charm-env python3
 
 # Copyright 2015 The Kubernetes Authors.
 #
@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from charms.templating.jinja2 import render
+from charmhelpers.core.templating import render
 from charms.reactive import is_state
 from charmhelpers.core.hookenv import action_get
 from charmhelpers.core.hookenv import action_set
@@ -23,6 +23,7 @@ from subprocess import check_call
 from subprocess import check_output
 from subprocess import CalledProcessError
 from tempfile import TemporaryDirectory
+import json
 import re
 import os
 import sys
@@ -36,6 +37,14 @@ def main():
     Kubernetes. This will invoke the validation steps, and only execute if
     this script thinks the environment is 'sane' enough to provision volumes.
     '''
+
+    # k8s >= 1.10 uses CSI and doesn't directly create persistent volumes
+    if get_version('kube-apiserver') >= (1, 10):
+       print('This action is deprecated in favor of CSI creation of persistent volumes')
+       print('in Kubernetes >= 1.10. Just create the PVC and a PV will be created')
+       print('for you.')
+       action_fail('Deprecated, just create PVC.')
+       return
 
     # validate relationship pre-reqs before additional steps can be taken
     if not validate_relation():
@@ -59,7 +68,7 @@ def main():
     if not validate_space(context['RBD_SIZE']):
         return
 
-    # Ensure our paramters match
+    # Ensure our parameters match
     param_validation = validate_parameters(context['RBD_NAME'],
                                            context['RBD_FS'],
                                            context['PV_MODE'])
@@ -86,6 +95,23 @@ def main():
         cmd = ['kubectl', 'create', '-f', temp_template]
         debug_command(cmd)
         check_call(cmd)
+
+
+def get_version(bin_name):
+    """Get the version of an installed Kubernetes binary.
+
+    :param str bin_name: Name of binary
+    :return: 3-tuple version (maj, min, patch)
+
+    Example::
+
+        >>> `get_version('kubelet')
+        (1, 6, 0)
+
+    """
+    cmd = '{} --version'.format(bin_name).split()
+    version_string = check_output(cmd).decode('utf-8')
+    return tuple(int(q) for q in re.findall("[0-9]+", version_string)[:3])
 
 
 def action_get_or_default(key):
@@ -179,14 +205,13 @@ def get_monitors():
 def get_available_space():
     ''' Determine the space available in the RBD pool. Throw an exception if
     the RBD pool ('rbd') isn't found. '''
-    command = ['ceph', 'df']
+    command = 'ceph df -f json'.split()
     debug_command(command)
     out = check_output(command).decode('utf-8')
-    for line in out.splitlines():
-        stripped = line.strip()
-        if stripped.startswith('rbd'):
-            M = stripped.split()[-2].replace('M', '')
-            return int(M)
+    data = json.loads(out)
+    for pool in data['pools']:
+        if pool['name'] == 'rbd':
+            return int(pool['stats']['max_avail'] / (1024 * 1024))
     raise UnknownAvailableSpaceException('Unable to determine available space.')  # noqa
 
 

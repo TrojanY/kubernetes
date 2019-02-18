@@ -27,6 +27,7 @@ import (
 	"k8s.io/kube-aggregator/pkg/apis/apiregistration"
 )
 
+// ValidateAPIService validates that the APIService is correctly defined.
 func ValidateAPIService(apiService *apiregistration.APIService) field.ErrorList {
 	requiredName := apiService.Spec.Version + "." + apiService.Spec.Group
 
@@ -58,9 +59,11 @@ func ValidateAPIService(apiService *apiregistration.APIService) field.ErrorList 
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "version"), apiService.Spec.Version, errString))
 	}
 
-	if apiService.Spec.Priority <= 0 || apiService.Spec.Priority > 1000 {
-		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "priority"), apiService.Spec.Priority, "priority must be positive and less than 1000"))
-
+	if apiService.Spec.GroupPriorityMinimum <= 0 || apiService.Spec.GroupPriorityMinimum > 20000 {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "groupPriorityMinimum"), apiService.Spec.GroupPriorityMinimum, "must be positive and less than 20000"))
+	}
+	if apiService.Spec.VersionPriority <= 0 || apiService.Spec.VersionPriority > 1000 {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "versionPriority"), apiService.Spec.VersionPriority, "must be positive and less than 1000"))
 	}
 
 	if apiService.Spec.Service == nil {
@@ -86,6 +89,7 @@ func ValidateAPIService(apiService *apiregistration.APIService) field.ErrorList 
 	return allErrs
 }
 
+// ValidateAPIServiceUpdate validates an update of APIService.
 func ValidateAPIServiceUpdate(newAPIService *apiregistration.APIService, oldAPIService *apiregistration.APIService) field.ErrorList {
 	allErrs := validation.ValidateObjectMetaUpdate(&newAPIService.ObjectMeta, &oldAPIService.ObjectMeta, field.NewPath("metadata"))
 	allErrs = append(allErrs, ValidateAPIService(newAPIService)...)
@@ -93,6 +97,7 @@ func ValidateAPIServiceUpdate(newAPIService *apiregistration.APIService, oldAPIS
 	return allErrs
 }
 
+// ValidateAPIServiceStatus validates that the APIService status is one of 'True', 'False' or 'Unknown'.
 func ValidateAPIServiceStatus(status *apiregistration.APIServiceStatus, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
@@ -108,6 +113,7 @@ func ValidateAPIServiceStatus(status *apiregistration.APIServiceStatus, fldPath 
 	return allErrs
 }
 
+// ValidateAPIServiceStatusUpdate validates an update of the status field of APIService.
 func ValidateAPIServiceStatusUpdate(newAPIService *apiregistration.APIService, oldAPIService *apiregistration.APIService) field.ErrorList {
 	allErrs := validation.ValidateObjectMetaUpdate(&newAPIService.ObjectMeta, &oldAPIService.ObjectMeta, field.NewPath("metadata"))
 	allErrs = append(allErrs, ValidateAPIServiceStatus(&newAPIService.Status, field.NewPath("status"))...)

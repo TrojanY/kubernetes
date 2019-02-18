@@ -1,5 +1,3 @@
-licenses(["notice"])
-
 load(
     "@io_bazel_rules_go//go:def.bzl",
     "go_library",
@@ -8,12 +6,12 @@ load(
 go_library(
     name = "go_default_library",
     srcs = ["cmd_sanity.go"],
-    tags = ["automanaged"],
+    importpath = "k8s.io/kubernetes/pkg/kubectl/cmd/util/sanity",
     visibility = [
         "//build/visible_to:pkg_kubectl_cmd_util_sanity_CONSUMERS",
     ],
     deps = [
-        "//pkg/kubectl/cmd/templates:go_default_library",
+        "//pkg/kubectl/util/templates:go_default_library",
         "//vendor/github.com/spf13/cobra:go_default_library",
         "//vendor/github.com/spf13/pflag:go_default_library",
     ],

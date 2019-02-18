@@ -21,43 +21,13 @@ import (
 	"strings"
 
 	genericvalidation "k8s.io/apimachinery/pkg/api/validation"
+	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
-	validationutil "k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apiserver/pkg/util/webhook"
 	"k8s.io/kubernetes/pkg/apis/admissionregistration"
 )
-
-func ValidateInitializerConfiguration(ic *admissionregistration.InitializerConfiguration) field.ErrorList {
-	allErrors := genericvalidation.ValidateObjectMeta(&ic.ObjectMeta, false, genericvalidation.NameIsDNSSubdomain, field.NewPath("metadata"))
-	for i, initializer := range ic.Initializers {
-		allErrors = append(allErrors, validateInitializer(&initializer, field.NewPath("initializers").Index(i))...)
-	}
-	return allErrors
-}
-
-func validateInitializer(initializer *admissionregistration.Initializer, fldPath *field.Path) field.ErrorList {
-	var allErrors field.ErrorList
-	// initlializer.Name must be fully qualified
-	if len(initializer.Name) == 0 {
-		allErrors = append(allErrors, field.Required(fldPath.Child("name"), ""))
-	}
-	if errs := validationutil.IsDNS1123Subdomain(initializer.Name); len(errs) > 0 {
-		allErrors = append(allErrors, field.Invalid(fldPath.Child("name"), initializer.Name, strings.Join(errs, ",")))
-	}
-	if len(strings.Split(initializer.Name, ".")) < 3 {
-		allErrors = append(allErrors, field.Invalid(fldPath.Child("name"), initializer.Name, "should be a domain with at least two dots"))
-	}
-
-	for i, rule := range initializer.Rules {
-		notAllowSubresources := false
-		allErrors = append(allErrors, validateRule(&rule, fldPath.Child("rules").Index(i), notAllowSubresources)...)
-	}
-	// TODO: relax the validation rule when admissionregistration is beta.
-	if initializer.FailurePolicy != nil && *initializer.FailurePolicy != admissionregistration.Ignore {
-		allErrors = append(allErrors, field.NotSupported(fldPath.Child("failurePolicy"), *initializer.FailurePolicy, []string{string(admissionregistration.Ignore)}))
-	}
-	return allErrors
-}
 
 func hasWildcard(slice []string) bool {
 	for _, s := range slice {
@@ -171,40 +141,64 @@ func validateRule(rule *admissionregistration.Rule, fldPath *field.Path, allowSu
 	return allErrors
 }
 
-func ValidateInitializerConfigurationUpdate(newIC, oldIC *admissionregistration.InitializerConfiguration) field.ErrorList {
-	return ValidateInitializerConfiguration(newIC)
-}
-
-func ValidateExternalAdmissionHookConfiguration(e *admissionregistration.ExternalAdmissionHookConfiguration) field.ErrorList {
+func ValidateValidatingWebhookConfiguration(e *admissionregistration.ValidatingWebhookConfiguration) field.ErrorList {
 	allErrors := genericvalidation.ValidateObjectMeta(&e.ObjectMeta, false, genericvalidation.NameIsDNSSubdomain, field.NewPath("metadata"))
-	for i, hook := range e.ExternalAdmissionHooks {
-		allErrors = append(allErrors, validateExternalAdmissionHook(&hook, field.NewPath("externalAdmissionHooks").Index(i))...)
+	for i, hook := range e.Webhooks {
+		allErrors = append(allErrors, validateWebhook(&hook, field.NewPath("webhooks").Index(i))...)
 	}
 	return allErrors
 }
 
-func validateExternalAdmissionHook(hook *admissionregistration.ExternalAdmissionHook, fldPath *field.Path) field.ErrorList {
+func ValidateMutatingWebhookConfiguration(e *admissionregistration.MutatingWebhookConfiguration) field.ErrorList {
+	allErrors := genericvalidation.ValidateObjectMeta(&e.ObjectMeta, false, genericvalidation.NameIsDNSSubdomain, field.NewPath("metadata"))
+	for i, hook := range e.Webhooks {
+		allErrors = append(allErrors, validateWebhook(&hook, field.NewPath("webhooks").Index(i))...)
+	}
+	return allErrors
+}
+
+func validateWebhook(hook *admissionregistration.Webhook, fldPath *field.Path) field.ErrorList {
 	var allErrors field.ErrorList
 	// hook.Name must be fully qualified
-	if len(hook.Name) == 0 {
-		allErrors = append(allErrors, field.Required(fldPath.Child("name"), ""))
-	}
-	if errs := validationutil.IsDNS1123Subdomain(hook.Name); len(errs) > 0 {
-		allErrors = append(allErrors, field.Invalid(fldPath.Child("name"), hook.Name, strings.Join(errs, ",")))
-	}
-	if len(strings.Split(hook.Name, ".")) < 3 {
-		allErrors = append(allErrors, field.Invalid(fldPath.Child("name"), hook.Name, "should be a domain with at least two dots"))
-	}
+	allErrors = append(allErrors, validation.IsFullyQualifiedName(fldPath.Child("name"), hook.Name)...)
 
 	for i, rule := range hook.Rules {
 		allErrors = append(allErrors, validateRuleWithOperations(&rule, fldPath.Child("rules").Index(i))...)
 	}
-	// TODO: relax the validation rule when admissionregistration is beta.
-	if hook.FailurePolicy != nil && *hook.FailurePolicy != admissionregistration.Ignore {
-		allErrors = append(allErrors, field.NotSupported(fldPath.Child("failurePolicy"), *hook.FailurePolicy, []string{string(admissionregistration.Ignore)}))
+	if hook.FailurePolicy != nil && !supportedFailurePolicies.Has(string(*hook.FailurePolicy)) {
+		allErrors = append(allErrors, field.NotSupported(fldPath.Child("failurePolicy"), *hook.FailurePolicy, supportedFailurePolicies.List()))
+	}
+	if hook.SideEffects != nil && !supportedSideEffectClasses.Has(string(*hook.SideEffects)) {
+		allErrors = append(allErrors, field.NotSupported(fldPath.Child("sideEffects"), *hook.SideEffects, supportedSideEffectClasses.List()))
+	}
+
+	if hook.NamespaceSelector != nil {
+		allErrors = append(allErrors, metav1validation.ValidateLabelSelector(hook.NamespaceSelector, fldPath.Child("namespaceSelector"))...)
+	}
+
+	cc := hook.ClientConfig
+	switch {
+	case (cc.URL == nil) == (cc.Service == nil):
+		allErrors = append(allErrors, field.Required(fldPath.Child("clientConfig"), "exactly one of url or service is required"))
+	case cc.URL != nil:
+		allErrors = append(allErrors, webhook.ValidateWebhookURL(fldPath.Child("clientConfig").Child("url"), *cc.URL, true)...)
+	case cc.Service != nil:
+		allErrors = append(allErrors, webhook.ValidateWebhookService(fldPath.Child("clientConfig").Child("service"), cc.Service.Name, cc.Service.Namespace, cc.Service.Path)...)
 	}
 	return allErrors
 }
+
+var supportedFailurePolicies = sets.NewString(
+	string(admissionregistration.Ignore),
+	string(admissionregistration.Fail),
+)
+
+var supportedSideEffectClasses = sets.NewString(
+	string(admissionregistration.SideEffectClassUnknown),
+	string(admissionregistration.SideEffectClassNone),
+	string(admissionregistration.SideEffectClassSome),
+	string(admissionregistration.SideEffectClassNoneOnDryRun),
+)
 
 var supportedOperations = sets.NewString(
 	string(admissionregistration.OperationAll),
@@ -241,6 +235,10 @@ func validateRuleWithOperations(ruleWithOperations *admissionregistration.RuleWi
 	return allErrors
 }
 
-func ValidateExternalAdmissionHookConfigurationUpdate(newC, oldC *admissionregistration.ExternalAdmissionHookConfiguration) field.ErrorList {
-	return ValidateExternalAdmissionHookConfiguration(newC)
+func ValidateValidatingWebhookConfigurationUpdate(newC, oldC *admissionregistration.ValidatingWebhookConfiguration) field.ErrorList {
+	return ValidateValidatingWebhookConfiguration(newC)
+}
+
+func ValidateMutatingWebhookConfigurationUpdate(newC, oldC *admissionregistration.MutatingWebhookConfiguration) field.ErrorList {
+	return ValidateMutatingWebhookConfiguration(newC)
 }

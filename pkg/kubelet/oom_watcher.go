@@ -17,16 +17,17 @@ limitations under the License.
 package kubelet
 
 import (
-	"github.com/golang/glog"
 	"github.com/google/cadvisor/events"
 	cadvisorapi "github.com/google/cadvisor/info/v1"
+	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
 )
 
+// OOMWatcher defines the interface of OOM watchers.
 type OOMWatcher interface {
 	Start(ref *v1.ObjectReference) error
 }
@@ -36,6 +37,7 @@ type realOOMWatcher struct {
 	recorder record.EventRecorder
 }
 
+// NewOOMWatcher creates and initializes a OOMWatcher based on parameters.
 func NewOOMWatcher(cadvisor cadvisor.Interface, recorder record.EventRecorder) OOMWatcher {
 	return &realOOMWatcher{
 		cadvisor: cadvisor,
@@ -63,10 +65,10 @@ func (ow *realOOMWatcher) Start(ref *v1.ObjectReference) error {
 		defer runtime.HandleCrash()
 
 		for event := range eventChannel.GetChannel() {
-			glog.V(2).Infof("Got sys oom event from cadvisor: %v", event)
+			klog.V(2).Infof("Got sys oom event from cadvisor: %v", event)
 			ow.recorder.PastEventf(ref, metav1.Time{Time: event.Timestamp}, v1.EventTypeWarning, systemOOMEvent, "System OOM encountered")
 		}
-		glog.Errorf("Unexpectedly stopped receiving OOM notifications from cAdvisor")
+		klog.Errorf("Unexpectedly stopped receiving OOM notifications from cAdvisor")
 	}()
 	return nil
 }

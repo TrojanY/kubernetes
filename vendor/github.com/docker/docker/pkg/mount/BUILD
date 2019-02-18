@@ -1,24 +1,38 @@
-package(default_visibility = ["//visibility:public"])
-
-licenses(["notice"])
-
-load(
-    "@io_bazel_rules_go//go:def.bzl",
-    "go_library",
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "go_default_library",
     srcs = [
         "flags.go",
+        "flags_freebsd.go",
         "flags_linux.go",
+        "flags_unsupported.go",
         "mount.go",
+        "mounter_freebsd.go",
         "mounter_linux.go",
+        "mounter_unsupported.go",
         "mountinfo.go",
+        "mountinfo_freebsd.go",
         "mountinfo_linux.go",
+        "mountinfo_unsupported.go",
+        "mountinfo_windows.go",
         "sharedsubtree_linux.go",
     ],
-    tags = ["automanaged"],
+    cgo = True,
+    importmap = "k8s.io/kubernetes/vendor/github.com/docker/docker/pkg/mount",
+    importpath = "github.com/docker/docker/pkg/mount",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//vendor/github.com/sirupsen/logrus:go_default_library",
+    ] + select({
+        "@io_bazel_rules_go//go/platform:freebsd": [
+            "//vendor/golang.org/x/sys/unix:go_default_library",
+        ],
+        "@io_bazel_rules_go//go/platform:linux": [
+            "//vendor/golang.org/x/sys/unix:go_default_library",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 filegroup(
@@ -32,4 +46,5 @@ filegroup(
     name = "all-srcs",
     srcs = [":package-srcs"],
     tags = ["automanaged"],
+    visibility = ["//visibility:public"],
 )

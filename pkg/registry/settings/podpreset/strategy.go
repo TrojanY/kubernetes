@@ -17,17 +17,12 @@ limitations under the License.
 package podpreset
 
 import (
-	"fmt"
+	"context"
 
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
-	"k8s.io/apiserver/pkg/registry/generic"
-	apistorage "k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/names"
-	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/apis/settings"
 	"k8s.io/kubernetes/pkg/apis/settings/validation"
 )
@@ -39,7 +34,7 @@ type podPresetStrategy struct {
 }
 
 // Strategy is the default logic that applies when creating and updating Pod Preset objects.
-var Strategy = podPresetStrategy{api.Scheme, names.SimpleNameGenerator}
+var Strategy = podPresetStrategy{legacyscheme.Scheme, names.SimpleNameGenerator}
 
 // NamespaceScoped returns true because all Pod Presets need to be within a namespace.
 func (podPresetStrategy) NamespaceScoped() bool {
@@ -47,13 +42,13 @@ func (podPresetStrategy) NamespaceScoped() bool {
 }
 
 // PrepareForCreate clears the status of a Pod Preset before creation.
-func (podPresetStrategy) PrepareForCreate(ctx genericapirequest.Context, obj runtime.Object) {
+func (podPresetStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 	pip := obj.(*settings.PodPreset)
 	pip.Generation = 1
 }
 
 // PrepareForUpdate clears fields that are not allowed to be set by end users on update.
-func (podPresetStrategy) PrepareForUpdate(ctx genericapirequest.Context, obj, old runtime.Object) {
+func (podPresetStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
 	newPodPreset := obj.(*settings.PodPreset)
 	oldPodPreset := old.(*settings.PodPreset)
 
@@ -62,7 +57,7 @@ func (podPresetStrategy) PrepareForUpdate(ctx genericapirequest.Context, obj, ol
 }
 
 // Validate validates a new PodPreset.
-func (podPresetStrategy) Validate(ctx genericapirequest.Context, obj runtime.Object) field.ErrorList {
+func (podPresetStrategy) Validate(ctx context.Context, obj runtime.Object) field.ErrorList {
 	pip := obj.(*settings.PodPreset)
 	return validation.ValidatePodPreset(pip)
 }
@@ -76,7 +71,7 @@ func (podPresetStrategy) AllowCreateOnUpdate() bool {
 }
 
 // ValidateUpdate is the default update validation for an end user.
-func (podPresetStrategy) ValidateUpdate(ctx genericapirequest.Context, obj, old runtime.Object) field.ErrorList {
+func (podPresetStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
 	validationErrorList := validation.ValidatePodPreset(obj.(*settings.PodPreset))
 	updateErrorList := validation.ValidatePodPresetUpdate(obj.(*settings.PodPreset), old.(*settings.PodPreset))
 	return append(validationErrorList, updateErrorList...)
@@ -85,28 +80,4 @@ func (podPresetStrategy) ValidateUpdate(ctx genericapirequest.Context, obj, old 
 // AllowUnconditionalUpdate is the default update policy for Pod Preset objects.
 func (podPresetStrategy) AllowUnconditionalUpdate() bool {
 	return true
-}
-
-// SelectableFields returns a field set that represents the object.
-func SelectableFields(pip *settings.PodPreset) fields.Set {
-	return generic.ObjectMetaFieldsSet(&pip.ObjectMeta, true)
-}
-
-// GetAttrs returns labels and fields of a given object for filtering purposes.
-func GetAttrs(obj runtime.Object) (labels.Set, fields.Set, bool, error) {
-	pip, ok := obj.(*settings.PodPreset)
-	if !ok {
-		return nil, nil, false, fmt.Errorf("given object is not a PodPreset.")
-	}
-	return labels.Set(pip.ObjectMeta.Labels), SelectableFields(pip), pip.Initializers != nil, nil
-}
-
-// Matcher is the filter used by the generic etcd backend to watch events
-// from etcd to clients of the apiserver only interested in specific labels/fields.
-func Matcher(label labels.Selector, field fields.Selector) apistorage.SelectionPredicate {
-	return apistorage.SelectionPredicate{
-		Label:    label,
-		Field:    field,
-		GetAttrs: GetAttrs,
-	}
 }

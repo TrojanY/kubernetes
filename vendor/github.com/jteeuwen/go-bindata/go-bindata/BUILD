@@ -1,18 +1,4 @@
-package(default_visibility = ["//visibility:public"])
-
-licenses(["notice"])
-
-load(
-    "@io_bazel_rules_go//go:def.bzl",
-    "go_binary",
-    "go_library",
-)
-
-go_binary(
-    name = "go-bindata",
-    library = ":go_default_library",
-    tags = ["automanaged"],
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
     name = "go_default_library",
@@ -21,8 +7,17 @@ go_library(
         "main.go",
         "version.go",
     ],
-    tags = ["automanaged"],
+    importmap = "k8s.io/kubernetes/vendor/github.com/jteeuwen/go-bindata/go-bindata",
+    importpath = "github.com/jteeuwen/go-bindata/go-bindata",
+    visibility = ["//visibility:private"],
     deps = ["//vendor/github.com/jteeuwen/go-bindata:go_default_library"],
+)
+
+go_binary(
+    name = "go-bindata",
+    embed = [":go_default_library"],
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
@@ -36,4 +31,5 @@ filegroup(
     name = "all-srcs",
     srcs = [":package-srcs"],
     tags = ["automanaged"],
+    visibility = ["//visibility:public"],
 )

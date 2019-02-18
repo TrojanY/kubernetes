@@ -1,7 +1,5 @@
 package(default_visibility = ["//visibility:public"])
 
-licenses(["notice"])
-
 load(
     "@io_bazel_rules_go//go:def.bzl",
     "go_library",
@@ -11,14 +9,27 @@ load(
 go_test(
     name = "go_default_test",
     srcs = ["aes_test.go"],
-    library = ":go_default_library",
-    tags = ["automanaged"],
-    deps = ["//vendor/k8s.io/apiserver/pkg/storage/value:go_default_library"],
+    embed = [":go_default_library"],
+    deps = ["//staging/src/k8s.io/apiserver/pkg/storage/value:go_default_library"],
 )
 
 go_library(
     name = "go_default_library",
     srcs = ["aes.go"],
+    importmap = "k8s.io/kubernetes/vendor/k8s.io/apiserver/pkg/storage/value/encrypt/aes",
+    importpath = "k8s.io/apiserver/pkg/storage/value/encrypt/aes",
+    deps = ["//staging/src/k8s.io/apiserver/pkg/storage/value:go_default_library"],
+)
+
+filegroup(
+    name = "package-srcs",
+    srcs = glob(["**"]),
     tags = ["automanaged"],
-    deps = ["//vendor/k8s.io/apiserver/pkg/storage/value:go_default_library"],
+    visibility = ["//visibility:private"],
+)
+
+filegroup(
+    name = "all-srcs",
+    srcs = [":package-srcs"],
+    tags = ["automanaged"],
 )

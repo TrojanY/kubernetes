@@ -1,8 +1,20 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+
 reviewers:
-  - gmarek
-  - jszczepkowski
-  - vishh	
-approvers:
+  - bowei
   - gmarek
   - jszczepkowski
   - vishh
+  - mwielgus
+  - MaciekPytel
+  - jingax10
+  - yujuhong
+approvers:
+  - bowei
+  - gmarek
+  - jszczepkowski
+  - vishh
+  - mwielgus
+  - MaciekPytel
+  - jingax10
+  - yujuhong

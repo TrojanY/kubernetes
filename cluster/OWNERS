@@ -1,8 +1,12 @@
+# See the OWNERS docs at https://go.k8s.io/owners
+
 reviewers:
+  - bentheelder
   - eparis
   - jbeda
   - mikedanese
   - roberthbailey
+  - spiffxp
   - zmerlynn
 approvers:
   - eparis
@@ -10,3 +14,5 @@ approvers:
   - mikedanese
   - roberthbailey
   - zmerlynn
+labels:
+- sig/cluster-lifecycle

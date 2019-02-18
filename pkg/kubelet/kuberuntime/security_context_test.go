@@ -17,9 +17,8 @@ limitations under the License.
 package kuberuntime
 
 import (
+	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/kubernetes/pkg/api/v1"
 
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -45,60 +44,95 @@ func TestVerifyRunAsNonRoot(t *testing.T) {
 		},
 	}
 
-	err := verifyRunAsNonRoot(pod, &pod.Spec.Containers[0], int64(0))
-	assert.NoError(t, err)
-
-	runAsUser := types.UnixUserID(0)
-	RunAsNonRoot := false
-	podWithContainerSecurityContext := &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			UID:       "12345678",
-			Name:      "bar",
-			Namespace: "new",
+	rootUser := int64(0)
+	anyUser := int64(1000)
+	runAsNonRootTrue := true
+	runAsNonRootFalse := false
+	for _, test := range []struct {
+		desc     string
+		sc       *v1.SecurityContext
+		uid      *int64
+		username string
+		fail     bool
+	}{
+		{
+			desc: "Pass if SecurityContext is not set",
+			sc:   nil,
+			uid:  &rootUser,
+			fail: false,
 		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
-				{
-					Name:            "foo",
-					Image:           "busybox",
-					ImagePullPolicy: v1.PullIfNotPresent,
-					Command:         []string{"testCommand"},
-					WorkingDir:      "testWorkingDir",
-					SecurityContext: &v1.SecurityContext{
-						RunAsNonRoot: &RunAsNonRoot,
-						RunAsUser:    &runAsUser,
-					},
-				},
+		{
+			desc: "Pass if RunAsNonRoot is not set",
+			sc: &v1.SecurityContext{
+				RunAsUser: &rootUser,
 			},
+			uid:  &rootUser,
+			fail: false,
 		},
-	}
-
-	err2 := verifyRunAsNonRoot(podWithContainerSecurityContext, &podWithContainerSecurityContext.Spec.Containers[0], int64(0))
-	assert.EqualError(t, err2, "container's runAsUser breaks non-root policy")
-
-	RunAsNonRoot = false
-	podWithContainerSecurityContext = &v1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			UID:       "12345678",
-			Name:      "bar",
-			Namespace: "new",
-		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
-				{
-					Name:            "foo",
-					Image:           "busybox",
-					ImagePullPolicy: v1.PullIfNotPresent,
-					Command:         []string{"testCommand"},
-					WorkingDir:      "testWorkingDir",
-					SecurityContext: &v1.SecurityContext{
-						RunAsNonRoot: &RunAsNonRoot,
-					},
-				},
+		{
+			desc: "Pass if RunAsNonRoot is false (image user is root)",
+			sc: &v1.SecurityContext{
+				RunAsNonRoot: &runAsNonRootFalse,
 			},
+			uid:  &rootUser,
+			fail: false,
 		},
+		{
+			desc: "Pass if RunAsNonRoot is false (RunAsUser is root)",
+			sc: &v1.SecurityContext{
+				RunAsNonRoot: &runAsNonRootFalse,
+				RunAsUser:    &rootUser,
+			},
+			uid:  &rootUser,
+			fail: false,
+		},
+		{
+			desc: "Fail if container's RunAsUser is root and RunAsNonRoot is true",
+			sc: &v1.SecurityContext{
+				RunAsNonRoot: &runAsNonRootTrue,
+				RunAsUser:    &rootUser,
+			},
+			uid:  &rootUser,
+			fail: true,
+		},
+		{
+			desc: "Fail if image's user is root and RunAsNonRoot is true",
+			sc: &v1.SecurityContext{
+				RunAsNonRoot: &runAsNonRootTrue,
+			},
+			uid:  &rootUser,
+			fail: true,
+		},
+		{
+			desc: "Fail if image's username is set and RunAsNonRoot is true",
+			sc: &v1.SecurityContext{
+				RunAsNonRoot: &runAsNonRootTrue,
+			},
+			username: "test",
+			fail:     true,
+		},
+		{
+			desc: "Pass if image's user is non-root and RunAsNonRoot is true",
+			sc: &v1.SecurityContext{
+				RunAsNonRoot: &runAsNonRootTrue,
+			},
+			uid:  &anyUser,
+			fail: false,
+		},
+		{
+			desc: "Pass if container's user and image's user aren't set and RunAsNonRoot is true",
+			sc: &v1.SecurityContext{
+				RunAsNonRoot: &runAsNonRootTrue,
+			},
+			fail: false,
+		},
+	} {
+		pod.Spec.Containers[0].SecurityContext = test.sc
+		err := verifyRunAsNonRoot(pod, &pod.Spec.Containers[0], test.uid, test.username)
+		if test.fail {
+			assert.Error(t, err, test.desc)
+		} else {
+			assert.NoError(t, err, test.desc)
+		}
 	}
-
-	err3 := verifyRunAsNonRoot(podWithContainerSecurityContext, &podWithContainerSecurityContext.Spec.Containers[0], int64(0))
-	assert.EqualError(t, err3, "container has runAsNonRoot and image will run as root")
 }
