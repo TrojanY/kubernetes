@@ -21,49 +21,20 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"reflect"
-	"runtime"
 	"testing"
 
-	"github.com/pmezard/go-difflib/difflib"
-
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
-	kubeadmapiv1beta1 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta1"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubeadmapiv1beta2 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta2"
 	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	"sigs.k8s.io/yaml"
 )
-
-const (
-	masterV1alpha3YAML          = "testdata/conversion/master/v1alpha3.yaml"
-	masterV1alpha3YAMLNonLinux  = "testdata/conversion/master/v1alpha3_non_linux.yaml"
-	masterV1beta1YAML           = "testdata/conversion/master/v1beta1.yaml"
-	masterV1beta1YAMLNonLinux   = "testdata/conversion/master/v1beta1_non_linux.yaml"
-	masterInternalYAML          = "testdata/conversion/master/internal.yaml"
-	masterInternalYAMLNonLinux  = "testdata/conversion/master/internal_non_linux.yaml"
-	masterIncompleteYAML        = "testdata/defaulting/master/incomplete.yaml"
-	masterDefaultedYAML         = "testdata/defaulting/master/defaulted.yaml"
-	masterDefaultedYAMLNonLinux = "testdata/defaulting/master/defaulted_non_linux.yaml"
-	masterInvalidYAML           = "testdata/validation/invalid_mastercfg.yaml"
-)
-
-func diff(expected, actual []byte) string {
-	// Write out the diff
-	var diffBytes bytes.Buffer
-	difflib.WriteUnifiedDiff(&diffBytes, difflib.UnifiedDiff{
-		A:        difflib.SplitLines(string(expected)),
-		B:        difflib.SplitLines(string(actual)),
-		FromFile: "expected",
-		ToFile:   "actual",
-		Context:  3,
-	})
-	return diffBytes.String()
-}
 
 func TestLoadInitConfigurationFromFile(t *testing.T) {
 	// Create temp folder for the test case
 	tmpdir, err := ioutil.TempDir("", "")
 	if err != nil {
-		t.Fatalf("Couldn't create tmpdir")
+		t.Fatalf("Couldn't create tmpdir: %v", err)
 	}
 	defer os.RemoveAll(tmpdir)
 
@@ -71,6 +42,7 @@ func TestLoadInitConfigurationFromFile(t *testing.T) {
 	var tests = []struct {
 		name         string
 		fileContents []byte
+		expectErr    bool
 	}{
 		{
 			name:         "v1beta1.partial1",
@@ -90,18 +62,18 @@ func TestLoadInitConfigurationFromFile(t *testing.T) {
 			}, []byte(constants.YAMLDocumentSeparator)),
 		},
 		{
-			name:         "v1alpha3.partial1",
-			fileContents: cfgFiles["InitConfiguration_v1alpha3"],
+			name:         "v1beta2.partial1",
+			fileContents: cfgFiles["InitConfiguration_v1beta2"],
 		},
 		{
-			name:         "v1alpha3.partial2",
-			fileContents: cfgFiles["ClusterConfiguration_v1alpha3"],
+			name:         "v1beta2.partial2",
+			fileContents: cfgFiles["ClusterConfiguration_v1beta2"],
 		},
 		{
-			name: "v1alpha3.full",
+			name: "v1beta2.full",
 			fileContents: bytes.Join([][]byte{
-				cfgFiles["InitConfiguration_v1alpha3"],
-				cfgFiles["ClusterConfiguration_v1alpha3"],
+				cfgFiles["InitConfiguration_v1beta2"],
+				cfgFiles["ClusterConfiguration_v1beta2"],
 				cfgFiles["Kube-proxy_componentconfig"],
 				cfgFiles["Kubelet_componentconfig"],
 			}, []byte(constants.YAMLDocumentSeparator)),
@@ -113,194 +85,101 @@ func TestLoadInitConfigurationFromFile(t *testing.T) {
 			cfgPath := filepath.Join(tmpdir, rt.name)
 			err := ioutil.WriteFile(cfgPath, rt.fileContents, 0644)
 			if err != nil {
-				t.Errorf("Couldn't create file")
+				t.Errorf("Couldn't create file: %v", err)
 				return
 			}
 
 			obj, err := LoadInitConfigurationFromFile(cfgPath)
-			if err != nil {
-				t.Errorf("Error reading file: %v", err)
-				return
-			}
-
-			if obj == nil {
-				t.Errorf("Unexpected nil return value")
-			}
-		})
-	}
-}
-
-func TestInitConfigurationMarshallingFromFile(t *testing.T) {
-	masterV1alpha3YAMLAbstracted := masterV1alpha3YAML
-	masterV1beta1YAMLAbstracted := masterV1beta1YAML
-	masterInternalYAMLAbstracted := masterInternalYAML
-	masterDefaultedYAMLAbstracted := masterDefaultedYAML
-	if runtime.GOOS != "linux" {
-		masterV1alpha3YAMLAbstracted = masterV1alpha3YAMLNonLinux
-		masterV1beta1YAMLAbstracted = masterV1beta1YAMLNonLinux
-		masterInternalYAMLAbstracted = masterInternalYAMLNonLinux
-		masterDefaultedYAMLAbstracted = masterDefaultedYAMLNonLinux
-	}
-
-	var tests = []struct {
-		name, in, out string
-		groupVersion  schema.GroupVersion
-		expectedErr   bool
-	}{
-		// These tests are reading one file, loading it using LoadInitConfigurationFromFile that all of kubeadm is using for unmarshal of our API types,
-		// and then marshals the internal object to the expected groupVersion
-		{ // v1alpha3 -> internal
-			name:         "v1alpha3ToInternal",
-			in:           masterV1alpha3YAMLAbstracted,
-			out:          masterInternalYAMLAbstracted,
-			groupVersion: kubeadm.SchemeGroupVersion,
-		},
-		{ // v1beta1 -> internal
-			name:         "v1beta1ToInternal",
-			in:           masterV1beta1YAMLAbstracted,
-			out:          masterInternalYAMLAbstracted,
-			groupVersion: kubeadm.SchemeGroupVersion,
-		},
-		{ // v1alpha3 -> internal -> v1beta1
-			name:         "v1alpha3Tov1beta1",
-			in:           masterV1alpha3YAMLAbstracted,
-			out:          masterV1beta1YAMLAbstracted,
-			groupVersion: kubeadmapiv1beta1.SchemeGroupVersion,
-		},
-		{ // v1beta1 -> internal -> v1beta1
-			name:         "v1beta1Tov1beta1",
-			in:           masterV1beta1YAMLAbstracted,
-			out:          masterV1beta1YAMLAbstracted,
-			groupVersion: kubeadmapiv1beta1.SchemeGroupVersion,
-		},
-		// These tests are reading one file that has only a subset of the fields populated, loading it using LoadInitConfigurationFromFile,
-		// and then marshals the internal object to the expected groupVersion
-		{ // v1beta1 -> default -> validate -> internal -> v1beta1
-			name:         "incompleteYAMLToDefaultedv1beta1",
-			in:           masterIncompleteYAML,
-			out:          masterDefaultedYAMLAbstracted,
-			groupVersion: kubeadmapiv1beta1.SchemeGroupVersion,
-		},
-		{ // v1alpha3 -> validation should fail
-			name:        "invalidYAMLShouldFail",
-			in:          masterInvalidYAML,
-			expectedErr: true,
-		},
-	}
-
-	for _, rt := range tests {
-		t.Run(rt.name, func(t2 *testing.T) {
-
-			internalcfg, err := LoadInitConfigurationFromFile(rt.in)
-			if err != nil {
-				if rt.expectedErr {
+			if rt.expectErr {
+				if err == nil {
+					t.Error("Unexpected success")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Error reading file: %v", err)
 					return
 				}
-				t2.Fatalf("couldn't unmarshal test data: %v", err)
-			}
 
-			actual, err := MarshalInitConfigurationToBytes(internalcfg, rt.groupVersion)
-			if err != nil {
-				t2.Fatalf("couldn't marshal internal object: %v", err)
-			}
-
-			expected, err := ioutil.ReadFile(rt.out)
-			if err != nil {
-				t2.Fatalf("couldn't read test data: %v", err)
-			}
-
-			if !bytes.Equal(expected, actual) {
-				t2.Errorf("the expected and actual output differs.\n\tin: %s\n\tout: %s\n\tgroupversion: %s\n\tdiff: \n%s\n",
-					rt.in, rt.out, rt.groupVersion.String(), diff(expected, actual))
+				if obj == nil {
+					t.Error("Unexpected nil return value")
+				}
 			}
 		})
 	}
 }
 
-func TestConsistentOrderByteSlice(t *testing.T) {
-	var (
-		aKind = "Akind"
-		aFile = []byte(`
-kind: Akind
-apiVersion: foo.k8s.io/v1
-`)
-		aaKind = "Aakind"
-		aaFile = []byte(`
-kind: Aakind
-apiVersion: foo.k8s.io/v1
-`)
-		abKind = "Abkind"
-		abFile = []byte(`
-kind: Abkind
-apiVersion: foo.k8s.io/v1
-`)
-	)
-	var tests = []struct {
-		name     string
-		in       map[string][]byte
-		expected [][]byte
+func TestDefaultTaintsMarshaling(t *testing.T) {
+	tests := []struct {
+		desc             string
+		cfg              kubeadmapiv1beta2.InitConfiguration
+		expectedTaintCnt int
 	}{
 		{
-			name: "a_aa_ab",
-			in: map[string][]byte{
-				aKind:  aFile,
-				aaKind: aaFile,
-				abKind: abFile,
+			desc: "Uninitialized nodeRegistration field produces a single taint (the master one)",
+			cfg: kubeadmapiv1beta2.InitConfiguration{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "kubeadm.k8s.io/v1beta2",
+					Kind:       constants.InitConfigurationKind,
+				},
 			},
-			expected: [][]byte{aaFile, abFile, aFile},
+			expectedTaintCnt: 1,
 		},
 		{
-			name: "a_ab_aa",
-			in: map[string][]byte{
-				aKind:  aFile,
-				abKind: abFile,
-				aaKind: aaFile,
+			desc: "Uninitialized taints field produces a single taint (the master one)",
+			cfg: kubeadmapiv1beta2.InitConfiguration{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "kubeadm.k8s.io/v1beta2",
+					Kind:       constants.InitConfigurationKind,
+				},
+				NodeRegistration: kubeadmapiv1beta2.NodeRegistrationOptions{},
 			},
-			expected: [][]byte{aaFile, abFile, aFile},
+			expectedTaintCnt: 1,
 		},
 		{
-			name: "aa_a_ab",
-			in: map[string][]byte{
-				aaKind: aaFile,
-				aKind:  aFile,
-				abKind: abFile,
+			desc: "Forsing taints to an empty slice produces no taints",
+			cfg: kubeadmapiv1beta2.InitConfiguration{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "kubeadm.k8s.io/v1beta2",
+					Kind:       constants.InitConfigurationKind,
+				},
+				NodeRegistration: kubeadmapiv1beta2.NodeRegistrationOptions{
+					Taints: []v1.Taint{},
+				},
 			},
-			expected: [][]byte{aaFile, abFile, aFile},
+			expectedTaintCnt: 0,
 		},
 		{
-			name: "aa_ab_a",
-			in: map[string][]byte{
-				aaKind: aaFile,
-				abKind: abFile,
-				aKind:  aFile,
+			desc: "Custom taints are used",
+			cfg: kubeadmapiv1beta2.InitConfiguration{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "kubeadm.k8s.io/v1beta2",
+					Kind:       constants.InitConfigurationKind,
+				},
+				NodeRegistration: kubeadmapiv1beta2.NodeRegistrationOptions{
+					Taints: []v1.Taint{
+						{Key: "taint1"},
+						{Key: "taint2"},
+					},
+				},
 			},
-			expected: [][]byte{aaFile, abFile, aFile},
-		},
-		{
-			name: "ab_a_aa",
-			in: map[string][]byte{
-				abKind: abFile,
-				aKind:  aFile,
-				aaKind: aaFile,
-			},
-			expected: [][]byte{aaFile, abFile, aFile},
-		},
-		{
-			name: "ab_aa_a",
-			in: map[string][]byte{
-				abKind: abFile,
-				aaKind: aaFile,
-				aKind:  aFile,
-			},
-			expected: [][]byte{aaFile, abFile, aFile},
+			expectedTaintCnt: 2,
 		},
 	}
 
-	for _, rt := range tests {
-		t.Run(rt.name, func(t2 *testing.T) {
-			actual := consistentOrderByteSlice(rt.in)
-			if !reflect.DeepEqual(rt.expected, actual) {
-				t2.Errorf("the expected and actual output differs.\n\texpected: %s\n\tout: %s\n", rt.expected, actual)
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			b, err := yaml.Marshal(tc.cfg)
+			if err != nil {
+				t.Fatalf("unexpected error while marshalling to YAML: %v", err)
+			}
+
+			cfg, err := BytesToInitConfiguration(b)
+			if err != nil {
+				t.Fatalf("unexpected error of BytesToInitConfiguration: %v\nconfig: %s", err, string(b))
+			}
+
+			if tc.expectedTaintCnt != len(cfg.NodeRegistration.Taints) {
+				t.Fatalf("unexpected taints count\nexpected: %d\ngot: %d\ntaints: %v", tc.expectedTaintCnt, len(cfg.NodeRegistration.Taints), cfg.NodeRegistration.Taints)
 			}
 		})
 	}

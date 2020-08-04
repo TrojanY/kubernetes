@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -38,6 +38,9 @@ const (
 	// ControllerManagerExtraArgs flag sets extra flags to pass to the Controller Manager or override default ones in form of <flagname>=<value>.
 	ControllerManagerExtraArgs = "controller-manager-extra-args"
 
+	// ControlPlaneEndpoint flag sets a stable IP address or DNS name for the control plane.
+	ControlPlaneEndpoint = "control-plane-endpoint"
+
 	// DryRun flag instruct kubeadm to don't apply any changes; just output what would be done.
 	DryRun = "dry-run"
 
@@ -58,6 +61,9 @@ const (
 
 	// KubernetesVersion flag sets the Kubernetes version for the control plane.
 	KubernetesVersion = "kubernetes-version"
+
+	// KubeletVersion flag sets the version for the kubelet config.
+	KubeletVersion = "kubelet-version"
 
 	// NetworkingDNSDomain flag sets the domain for services, e.g. "myorg.internal".
 	NetworkingDNSDomain = "service-dns-domain"
@@ -117,5 +123,29 @@ const (
 	FileDiscovery = "discovery-file"
 
 	// ControlPlane flag instruct kubeadm to create a new control plane instance on this node
-	ControlPlane = "experimental-control-plane"
+	ControlPlane = "control-plane"
+
+	// UploadCerts flag instruct kubeadm to upload certificates
+	UploadCerts = "upload-certs"
+
+	// CertificateKey flag sets the key used to encrypt and decrypt certificate secrets
+	CertificateKey = "certificate-key"
+
+	// SkipCertificateKeyPrint flag instruct kubeadm to skip printing certificate key used to encrypt certs by 'kubeadm init'.
+	SkipCertificateKeyPrint = "skip-certificate-key-print"
+
+	// ForceReset flag instruct kubeadm to reset the node without prompting for confirmation
+	ForceReset = "force"
+
+	// CertificateRenewal flag instruct kubeadm to execute certificate renewal during upgrades
+	CertificateRenewal = "certificate-renewal"
+
+	// EtcdUpgrade flag instruct kubeadm to execute etcd upgrade during upgrades
+	EtcdUpgrade = "etcd-upgrade"
+
+	// Kustomize flag sets the folder where kustomize patches for static pod manifest are stored
+	Kustomize = "experimental-kustomize"
+
+	// Patches flag sets the folder where kubeadm component patches are stored
+	Patches = "experimental-patches"
 )

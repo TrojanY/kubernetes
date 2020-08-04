@@ -14,11 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# This script checks restricted packages are imported or not and outputs the
+# result. Target directory's path and allowed packages against checking are
+# listed in `staging/publishing/import-restrictions.yaml`.
+# Usage: `hack/verify-imports.sh`.
+
 set -o errexit
 set -o nounset
 set -o pipefail
 
-KUBE_ROOT=$(dirname "${BASH_SOURCE}")/..
+KUBE_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
 source "${KUBE_ROOT}/hack/lib/init.sh"
 
 kube::golang::setup_env

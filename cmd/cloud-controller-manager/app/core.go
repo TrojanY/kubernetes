@@ -21,26 +21,42 @@ limitations under the License.
 package app
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
 
 	cloudprovider "k8s.io/cloud-provider"
-	"k8s.io/klog"
+	cloudnodecontroller "k8s.io/cloud-provider/controllers/node"
+	cloudnodelifecyclecontroller "k8s.io/cloud-provider/controllers/nodelifecycle"
+	routecontroller "k8s.io/cloud-provider/controllers/route"
+	servicecontroller "k8s.io/cloud-provider/controllers/service"
+	"k8s.io/klog/v2"
 	cloudcontrollerconfig "k8s.io/kubernetes/cmd/cloud-controller-manager/app/config"
-	cloudcontrollers "k8s.io/kubernetes/pkg/controller/cloud"
-	routecontroller "k8s.io/kubernetes/pkg/controller/route"
-	servicecontroller "k8s.io/kubernetes/pkg/controller/service"
+	netutils "k8s.io/utils/net"
+
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+)
+
+const (
+	// IPv6DualStack enables ipv6 dual stack feature
+	// Original copy from pkg/features/kube_features.go
+	IPv6DualStack = "IPv6DualStack"
 )
 
 func startCloudNodeController(ctx *cloudcontrollerconfig.CompletedConfig, cloud cloudprovider.Interface, stopCh <-chan struct{}) (http.Handler, bool, error) {
 	// Start the CloudNodeController
-	nodeController := cloudcontrollers.NewCloudNodeController(
+	nodeController, err := cloudnodecontroller.NewCloudNodeController(
 		ctx.SharedInformers.Core().V1().Nodes(),
 		// cloud node controller uses existing cluster role from node-controller
 		ctx.ClientBuilder.ClientOrDie("node-controller"),
 		cloud,
-		ctx.ComponentConfig.NodeStatusUpdateFrequency.Duration)
+		ctx.ComponentConfig.NodeStatusUpdateFrequency.Duration,
+	)
+	if err != nil {
+		klog.Warningf("failed to start cloud node controller: %s", err)
+		return nil, false, nil
+	}
 
 	go nodeController.Run(stopCh)
 
@@ -49,7 +65,7 @@ func startCloudNodeController(ctx *cloudcontrollerconfig.CompletedConfig, cloud 
 
 func startCloudNodeLifecycleController(ctx *cloudcontrollerconfig.CompletedConfig, cloud cloudprovider.Interface, stopCh <-chan struct{}) (http.Handler, bool, error) {
 	// Start the cloudNodeLifecycleController
-	cloudNodeLifecycleController, err := cloudcontrollers.NewCloudNodeLifecycleController(
+	cloudNodeLifecycleController, err := cloudnodelifecyclecontroller.NewCloudNodeLifecycleController(
 		ctx.SharedInformers.Core().V1().Nodes(),
 		// cloud node lifecycle controller uses existing cluster role from node-controller
 		ctx.ClientBuilder.ClientOrDie("node-controller"),
@@ -66,17 +82,6 @@ func startCloudNodeLifecycleController(ctx *cloudcontrollerconfig.CompletedConfi
 	return nil, true, nil
 }
 
-func startPersistentVolumeLabelController(ctx *cloudcontrollerconfig.CompletedConfig, cloud cloudprovider.Interface, stopCh <-chan struct{}) (http.Handler, bool, error) {
-	// Start the PersistentVolumeLabelController
-	pvlController := cloudcontrollers.NewPersistentVolumeLabelController(
-		ctx.ClientBuilder.ClientOrDie("pvl-controller"),
-		cloud,
-	)
-	go pvlController.Run(5, stopCh)
-
-	return nil, true, nil
-}
-
 func startServiceController(ctx *cloudcontrollerconfig.CompletedConfig, cloud cloudprovider.Interface, stopCh <-chan struct{}) (http.Handler, bool, error) {
 	// Start the service controller
 	serviceController, err := servicecontroller.New(
@@ -85,6 +90,7 @@ func startServiceController(ctx *cloudcontrollerconfig.CompletedConfig, cloud cl
 		ctx.SharedInformers.Core().V1().Services(),
 		ctx.SharedInformers.Core().V1().Nodes(),
 		ctx.ComponentConfig.KubeCloudShared.ClusterName,
+		utilfeature.DefaultFeatureGate,
 	)
 	if err != nil {
 		// This error shouldn't fail. It lives like this as a legacy.
@@ -109,13 +115,26 @@ func startRouteController(ctx *cloudcontrollerconfig.CompletedConfig, cloud clou
 		klog.Warning("configure-cloud-routes is set, but cloud provider does not support routes. Will not configure cloud provider routes.")
 		return nil, false, nil
 	}
-	var clusterCIDR *net.IPNet
-	var err error
-	if len(strings.TrimSpace(ctx.ComponentConfig.KubeCloudShared.ClusterCIDR)) != 0 {
-		_, clusterCIDR, err = net.ParseCIDR(ctx.ComponentConfig.KubeCloudShared.ClusterCIDR)
-		if err != nil {
-			klog.Warningf("Unsuccessful parsing of cluster CIDR %v: %v", ctx.ComponentConfig.KubeCloudShared.ClusterCIDR, err)
-		}
+
+	// failure: bad cidrs in config
+	clusterCIDRs, dualStack, err := processCIDRs(ctx.ComponentConfig.KubeCloudShared.ClusterCIDR)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// failure: more than one cidr and dual stack is not enabled
+	if len(clusterCIDRs) > 1 && !utilfeature.DefaultFeatureGate.Enabled(IPv6DualStack) {
+		return nil, false, fmt.Errorf("len of ClusterCIDRs==%v and dualstack feature is not enabled", len(clusterCIDRs))
+	}
+
+	// failure: more than one cidr but they are not configured as dual stack
+	if len(clusterCIDRs) > 1 && !dualStack {
+		return nil, false, fmt.Errorf("len of ClusterCIDRs==%v and they are not configured as dual stack (at least one from each IPFamily", len(clusterCIDRs))
+	}
+
+	// failure: more than cidrs is not allowed even with dual stack
+	if len(clusterCIDRs) > 2 {
+		return nil, false, fmt.Errorf("length of clusterCIDRs is:%v more than max allowed of 2", len(clusterCIDRs))
 	}
 
 	routeController := routecontroller.New(
@@ -123,9 +142,28 @@ func startRouteController(ctx *cloudcontrollerconfig.CompletedConfig, cloud clou
 		ctx.ClientBuilder.ClientOrDie("route-controller"),
 		ctx.SharedInformers.Core().V1().Nodes(),
 		ctx.ComponentConfig.KubeCloudShared.ClusterName,
-		clusterCIDR,
+		clusterCIDRs,
 	)
 	go routeController.Run(stopCh, ctx.ComponentConfig.KubeCloudShared.RouteReconciliationPeriod.Duration)
 
 	return nil, true, nil
+}
+
+// processCIDRs is a helper function that works on a comma separated cidrs and returns
+// a list of typed cidrs
+// a flag if cidrs represents a dual stack
+// error if failed to parse any of the cidrs
+func processCIDRs(cidrsList string) ([]*net.IPNet, bool, error) {
+	cidrsSplit := strings.Split(strings.TrimSpace(cidrsList), ",")
+
+	cidrs, err := netutils.ParseCIDRs(cidrsSplit)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// if cidrs has an error then the previous call will fail
+	// safe to ignore error checking on next call
+	dualstack, _ := netutils.IsDualStackCIDRs(cidrs)
+
+	return cidrs, dualstack, nil
 }

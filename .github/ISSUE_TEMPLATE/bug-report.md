@@ -22,7 +22,8 @@ If the matter is security related, please disclose it privately via https://kube
 **Environment**:
 - Kubernetes version (use `kubectl version`):
 - Cloud provider or hardware configuration:
-- OS (e.g. from /etc/os-release):
+- OS (e.g: `cat /etc/os-release`):
 - Kernel (e.g. `uname -a`):
 - Install tools:
+- Network plugin and version (if this is a network-related bug):
 - Others:

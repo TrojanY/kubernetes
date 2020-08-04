@@ -17,37 +17,29 @@ limitations under the License.
 package phases
 
 import (
+	"fmt"
+
 	"github.com/pkg/errors"
-	"k8s.io/klog"
-	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/cmd/kubeadm/app/cmd/options"
 	"k8s.io/kubernetes/cmd/kubeadm/app/cmd/phases/workflow"
+	cmdutil "k8s.io/kubernetes/cmd/kubeadm/app/cmd/util"
 	kubeletphase "k8s.io/kubernetes/cmd/kubeadm/app/phases/kubelet"
-	"k8s.io/kubernetes/pkg/util/normalizer"
 )
 
 var (
-	kubeletStartPhaseExample = normalizer.Examples(`
+	kubeletStartPhaseExample = cmdutil.Examples(`
 		# Writes a dynamic environment file with kubelet flags from a InitConfiguration file.
 		kubeadm init phase kubelet-start --config config.yaml
 		`)
 )
 
-// kubeletStartData defines the behavior that a runtime data struct passed to the kubelet start phase
-// should have. Please note that we are using an interface in order to make this phase reusable in different workflows
-// (and thus with different runtime data struct, all of them requested to be compliant to this interface)
-type kubeletStartData interface {
-	Cfg() *kubeadmapi.InitConfiguration
-	DryRun() bool
-	KubeletDir() string
-}
-
 // NewKubeletStartPhase creates a kubeadm workflow phase that start kubelet on a node.
 func NewKubeletStartPhase() workflow.Phase {
 	return workflow.Phase{
 		Name:    "kubelet-start",
-		Short:   "Writes kubelet settings and (re)starts the kubelet",
-		Long:    "Writes a file with KubeletConfiguration and an environment file with node specific kubelet settings, and then (re)starts kubelet.",
+		Short:   "Write kubelet settings and (re)start the kubelet",
+		Long:    "Write a file with KubeletConfiguration and an environment file with node specific kubelet settings, and then (re)start kubelet.",
 		Example: kubeletStartPhaseExample,
 		Run:     runKubeletStart,
 		InheritFlags: []string{
@@ -60,7 +52,7 @@ func NewKubeletStartPhase() workflow.Phase {
 
 // runKubeletStart executes kubelet start logic.
 func runKubeletStart(c workflow.RunData) error {
-	data, ok := c.(kubeletStartData)
+	data, ok := c.(InitData)
 	if !ok {
 		return errors.New("kubelet-start phase invoked with an invalid data struct")
 	}
@@ -68,7 +60,7 @@ func runKubeletStart(c workflow.RunData) error {
 	// First off, configure the kubelet. In this short timeframe, kubeadm is trying to stop/restart the kubelet
 	// Try to stop the kubelet service so no race conditions occur when configuring it
 	if !data.DryRun() {
-		klog.V(1).Infof("Stopping the kubelet")
+		klog.V(1).Infoln("Stopping the kubelet")
 		kubeletphase.TryStopKubelet()
 	}
 
@@ -80,13 +72,13 @@ func runKubeletStart(c workflow.RunData) error {
 	}
 
 	// Write the kubelet configuration file to disk.
-	if err := kubeletphase.WriteConfigToDisk(data.Cfg().ComponentConfigs.Kubelet, data.KubeletDir()); err != nil {
+	if err := kubeletphase.WriteConfigToDisk(&data.Cfg().ClusterConfiguration, data.KubeletDir()); err != nil {
 		return errors.Wrap(err, "error writing kubelet configuration to disk")
 	}
 
 	// Try to start the kubelet service in case it's inactive
 	if !data.DryRun() {
-		klog.V(1).Infof("Starting the kubelet")
+		fmt.Println("[kubelet-start] Starting the kubelet")
 		kubeletphase.TryStartKubelet()
 	}
 

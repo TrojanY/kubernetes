@@ -1,4 +1,4 @@
-// +build cgo,linux
+// +build linux
 
 /*
 Copyright 2015 The Kubernetes Authors.
@@ -26,6 +26,17 @@ import (
 	"path"
 	"time"
 
+	// Register supported container handlers.
+	_ "github.com/google/cadvisor/container/containerd/install"
+	_ "github.com/google/cadvisor/container/crio/install"
+	_ "github.com/google/cadvisor/container/systemd/install"
+
+	// Register cloud info providers.
+	// TODO(#68522): Remove this in 1.20+ once the cAdvisor endpoints are removed.
+	_ "github.com/google/cadvisor/utils/cloudinfo/aws"
+	_ "github.com/google/cadvisor/utils/cloudinfo/azure"
+	_ "github.com/google/cadvisor/utils/cloudinfo/gce"
+
 	"github.com/google/cadvisor/cache/memory"
 	cadvisormetrics "github.com/google/cadvisor/container"
 	"github.com/google/cadvisor/events"
@@ -33,7 +44,10 @@ import (
 	cadvisorapiv2 "github.com/google/cadvisor/info/v2"
 	"github.com/google/cadvisor/manager"
 	"github.com/google/cadvisor/utils/sysfs"
-	"k8s.io/klog"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/klog/v2"
+	kubefeatures "k8s.io/kubernetes/pkg/features"
+	"k8s.io/utils/pointer"
 )
 
 type cadvisorClient struct {
@@ -70,7 +84,8 @@ func init() {
 	}
 }
 
-func New(imageFsInfoProvider ImageFsInfoProvider, rootPath string, usingLegacyStats bool) (Interface, error) {
+// New creates a new cAdvisor Interface for linux systems.
+func New(imageFsInfoProvider ImageFsInfoProvider, rootPath string, cgroupRoots []string, usingLegacyStats bool) (Interface, error) {
 	sysFs := sysfs.NewRealSysFs()
 
 	includedMetrics := cadvisormetrics.MetricSet{
@@ -81,15 +96,20 @@ func New(imageFsInfoProvider ImageFsInfoProvider, rootPath string, usingLegacySt
 		cadvisormetrics.NetworkUsageMetrics:     struct{}{},
 		cadvisormetrics.AcceleratorUsageMetrics: struct{}{},
 		cadvisormetrics.AppMetrics:              struct{}{},
+		cadvisormetrics.ProcessMetrics:          struct{}{},
 	}
-	if usingLegacyStats {
+	if usingLegacyStats || utilfeature.DefaultFeatureGate.Enabled(kubefeatures.LocalStorageCapacityIsolation) {
 		includedMetrics[cadvisormetrics.DiskUsageMetrics] = struct{}{}
 	}
 
-	// collect metrics for all cgroups
-	rawContainerCgroupPathPrefixWhiteList := []string{"/"}
-	// Create and start the cAdvisor container manager.
-	m, err := manager.New(memory.New(statsCacheDuration, nil), sysFs, maxHousekeepingInterval, allowDynamicHousekeeping, includedMetrics, http.DefaultClient, rawContainerCgroupPathPrefixWhiteList)
+	duration := maxHousekeepingInterval
+	housekeepingConfig := manager.HouskeepingConfig{
+		Interval:     &duration,
+		AllowDynamic: pointer.BoolPtr(allowDynamicHousekeeping),
+	}
+
+	// Create the cAdvisor container manager.
+	m, err := manager.New(memory.New(statsCacheDuration, nil), sysFs, housekeepingConfig, includedMetrics, http.DefaultClient, cgroupRoots, "")
 	if err != nil {
 		return nil, err
 	}
@@ -104,13 +124,11 @@ func New(imageFsInfoProvider ImageFsInfoProvider, rootPath string, usingLegacySt
 		}
 	}
 
-	cadvisorClient := &cadvisorClient{
+	return &cadvisorClient{
 		imageFsInfoProvider: imageFsInfoProvider,
 		rootPath:            rootPath,
 		Manager:             m,
-	}
-
-	return cadvisorClient, nil
+	}, nil
 }
 
 func (cc *cadvisorClient) Start() error {

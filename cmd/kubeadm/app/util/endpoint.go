@@ -26,13 +26,14 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation"
 	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
+	utilsnet "k8s.io/utils/net"
 )
 
-// GetMasterEndpoint returns a properly formatted endpoint for the control plane built according following rules:
+// GetControlPlaneEndpoint returns a properly formatted endpoint for the control plane built according following rules:
 // - If the controlPlaneEndpoint is defined, use it.
 // - if the controlPlaneEndpoint is defined but without a port number, use the controlPlaneEndpoint + localEndpoint.BindPort is used.
 // - Otherwise, in case the controlPlaneEndpoint is not defined, use the localEndpoint.AdvertiseAddress + the localEndpoint.BindPort.
-func GetMasterEndpoint(controlPlaneEndpoint string, localEndpoint *kubeadmapi.APIEndpoint) (string, error) {
+func GetControlPlaneEndpoint(controlPlaneEndpoint string, localEndpoint *kubeadmapi.APIEndpoint) (string, error) {
 	// parse the bind port
 	bindPortString := strconv.Itoa(int(localEndpoint.BindPort))
 	if _, err := ParsePort(bindPortString); err != nil {
@@ -45,8 +46,8 @@ func GetMasterEndpoint(controlPlaneEndpoint string, localEndpoint *kubeadmapi.AP
 		return "", errors.Errorf("invalid value `%s` given for api.advertiseAddress", localEndpoint.AdvertiseAddress)
 	}
 
-	// set the master url using localEndpoint.AdvertiseAddress + the localEndpoint.BindPort
-	masterURL := &url.URL{
+	// set the control-plane url using localEndpoint.AdvertiseAddress + the localEndpoint.BindPort
+	controlPlaneURL := &url.URL{
 		Scheme: "https",
 		Host:   net.JoinHostPort(ip.String(), bindPortString),
 	}
@@ -69,14 +70,14 @@ func GetMasterEndpoint(controlPlaneEndpoint string, localEndpoint *kubeadmapi.AP
 			port = bindPortString
 		}
 
-		// overrides the master url using the controlPlaneAddress (and eventually the bindport)
-		masterURL = &url.URL{
+		// overrides the control-plane url using the controlPlaneAddress (and eventually the bindport)
+		controlPlaneURL = &url.URL{
 			Scheme: "https",
 			Host:   net.JoinHostPort(host, port),
 		}
 	}
 
-	return masterURL.String(), nil
+	return controlPlaneURL.String(), nil
 }
 
 // ParseHostPort parses a network address of the form "host:port", "ipv4:port", "[ipv6]:port" into host and port;
@@ -115,7 +116,7 @@ func ParseHostPort(hostport string) (string, string, error) {
 // ParsePort parses a string representing a TCP port.
 // If the string is not a valid representation of a TCP port, ParsePort returns an error.
 func ParsePort(port string) (int, error) {
-	portInt, err := strconv.Atoi(port)
+	portInt, err := utilsnet.ParsePort(port, true)
 	if err == nil && (1 <= portInt && portInt <= 65535) {
 		return portInt, nil
 	}

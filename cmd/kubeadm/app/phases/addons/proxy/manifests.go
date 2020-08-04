@@ -33,7 +33,7 @@ data:
     clusters:
     - cluster:
         certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-        server: {{ .MasterEndpoint }}
+        server: {{ .ControlPlaneEndpoint }}
       name: default
     contexts:
     - context:
@@ -112,5 +112,7 @@ spec:
       - key: CriticalAddonsOnly
         operator: Exists
       - operator: Exists
+      nodeSelector:
+        kubernetes.io/os: linux
 `
 )

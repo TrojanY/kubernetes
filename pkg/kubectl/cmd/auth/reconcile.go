@@ -22,19 +22,19 @@ import (
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	rbacv1 "k8s.io/api/rbac/v1"
 	rbacv1alpha1 "k8s.io/api/rbac/v1alpha1"
 	rbacv1beta1 "k8s.io/api/rbac/v1beta1"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/cli-runtime/pkg/genericclioptions/printers"
-	"k8s.io/cli-runtime/pkg/genericclioptions/resource"
+	"k8s.io/cli-runtime/pkg/printers"
+	"k8s.io/cli-runtime/pkg/resource"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	rbacv1client "k8s.io/client-go/kubernetes/typed/rbac/v1"
-	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/kubectl/scheme"
-	"k8s.io/kubernetes/pkg/kubectl/util/templates"
+	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+	"k8s.io/kubectl/pkg/scheme"
+	"k8s.io/kubectl/pkg/util/templates"
 	"k8s.io/kubernetes/pkg/registry/rbac/reconciliation"
 )
 
@@ -61,7 +61,7 @@ var (
 		Reconciles rules for RBAC Role, RoleBinding, ClusterRole, and ClusterRole binding objects.
 
 		Missing objects are created, and the containing namespace is created for namespaced objects, if required.
-		
+
 		Existing roles are updated to include the permissions in the input objects,
 		and remove extra permissions if --remove-extra-permissions is specified.
 
@@ -104,19 +104,24 @@ func NewCmdReconcile(f cmdutil.Factory, streams genericclioptions.IOStreams) *co
 	o.PrintFlags.AddFlags(cmd)
 
 	cmdutil.AddFilenameOptionFlags(cmd, o.FilenameOptions, "identifying the resource to reconcile.")
-	cmd.Flags().BoolVar(&o.DryRun, "dry-run", o.DryRun, "If true, display results but do not submit changes")
 	cmd.Flags().BoolVar(&o.RemoveExtraPermissions, "remove-extra-permissions", o.RemoveExtraPermissions, "If true, removes extra permissions added to roles")
 	cmd.Flags().BoolVar(&o.RemoveExtraSubjects, "remove-extra-subjects", o.RemoveExtraSubjects, "If true, removes extra subjects added to rolebindings")
-	cmd.MarkFlagRequired("filename")
+	cmdutil.AddDryRunFlag(cmd)
 
 	return cmd
 }
 
 // Complete completes all the required options
 func (o *ReconcileOptions) Complete(cmd *cobra.Command, f cmdutil.Factory, args []string) error {
+	if err := o.FilenameOptions.RequireFilenameOrKustomize(); err != nil {
+		return err
+	}
+
 	if len(args) > 0 {
 		return errors.New("no arguments are allowed")
 	}
+
+	o.DryRun = getClientSideDryRun(cmd)
 
 	namespace, enforceNamespace, err := f.ToRawKubeConfigLoader().Namespace()
 	if err != nil {
@@ -324,4 +329,15 @@ func (o *ReconcileOptions) printResults(object runtime.Object,
 			}
 		}
 	}
+}
+
+func getClientSideDryRun(cmd *cobra.Command) bool {
+	dryRunStrategy, err := cmdutil.GetDryRunStrategy(cmd)
+	if err != nil {
+		klog.Fatalf("error accessing --dry-run flag for command %s: %v", cmd.Name(), err)
+	}
+	if dryRunStrategy == cmdutil.DryRunServer {
+		klog.Fatalf("--dry-run=server for command %s is not supported yet", cmd.Name())
+	}
+	return dryRunStrategy == cmdutil.DryRunClient
 }

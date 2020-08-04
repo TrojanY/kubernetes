@@ -17,7 +17,7 @@ limitations under the License.
 package v1beta2
 
 import (
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -58,6 +58,10 @@ type ScaleStatus struct {
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=autoscaling,v1,Scale
 
 // Scale represents a scaling request for a resource.
 type Scale struct {
@@ -79,6 +83,10 @@ type Scale struct {
 // +genclient:method=GetScale,verb=get,subresource=scale,result=Scale
 // +genclient:method=UpdateScale,verb=update,subresource=scale,input=Scale,result=Scale
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=apps,v1,StatefulSet
 
 // DEPRECATED - This group version of StatefulSet is deprecated by apps/v1/StatefulSet. See the release notes for
 // more information.
@@ -141,13 +149,13 @@ const (
 	// ordering constraints. When a scale operation is performed with this
 	// strategy, new Pods will be created from the specification version indicated
 	// by the StatefulSet's updateRevision.
-	RollingUpdateStatefulSetStrategyType = "RollingUpdate"
+	RollingUpdateStatefulSetStrategyType StatefulSetUpdateStrategyType = "RollingUpdate"
 	// OnDeleteStatefulSetStrategyType triggers the legacy behavior. Version
 	// tracking and ordered rolling restarts are disabled. Pods are recreated
 	// from the StatefulSetSpec when they are manually deleted. When a scale
 	// operation is performed with this strategy,specification version indicated
 	// by the StatefulSet's currentRevision.
-	OnDeleteStatefulSetStrategyType = "OnDelete"
+	OnDeleteStatefulSetStrategyType StatefulSetUpdateStrategyType = "OnDelete"
 )
 
 // RollingUpdateStatefulSetStrategy is used to communicate parameter for RollingUpdateStatefulSetStrategyType.
@@ -282,6 +290,10 @@ type StatefulSetCondition struct {
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=apps,v1,StatefulSetList
 
 // StatefulSetList is a collection of StatefulSets.
 type StatefulSetList struct {
@@ -293,6 +305,10 @@ type StatefulSetList struct {
 
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=apps,v1,Deployment
 
 // DEPRECATED - This group version of Deployment is deprecated by apps/v1/Deployment. See the release notes for
 // more information.
@@ -413,7 +429,7 @@ type RollingUpdateDeployment struct {
 	// the rolling update starts, such that the total number of old and new pods do not exceed
 	// 130% of desired pods. Once old pods have been killed,
 	// new ReplicaSet can be scaled up further, ensuring that total number of pods running
-	// at any time during the update is atmost 130% of desired pods.
+	// at any time during the update is at most 130% of desired pods.
 	// +optional
 	MaxSurge *intstr.IntOrString `json:"maxSurge,omitempty" protobuf:"bytes,2,opt,name=maxSurge"`
 }
@@ -492,6 +508,10 @@ type DeploymentCondition struct {
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=apps,v1,DeploymentList
 
 // DeploymentList is a list of Deployments.
 type DeploymentList struct {
@@ -659,6 +679,10 @@ type DaemonSetCondition struct {
 
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=apps,v1,DaemonSet
 
 // DEPRECATED - This group version of DaemonSet is deprecated by apps/v1/DaemonSet. See the release notes for
 // more information.
@@ -692,6 +716,10 @@ const (
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=apps,v1,DaemonSetList
 
 // DaemonSetList is a collection of daemon sets.
 type DaemonSetList struct {
@@ -707,6 +735,10 @@ type DaemonSetList struct {
 
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=apps,v1,ReplicaSet
 
 // DEPRECATED - This group version of ReplicaSet is deprecated by apps/v1/ReplicaSet. See the release notes for
 // more information.
@@ -735,6 +767,10 @@ type ReplicaSet struct {
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=apps,v1,ReplicaSetList
 
 // ReplicaSetList is a collection of ReplicaSets.
 type ReplicaSetList struct {
@@ -835,6 +871,10 @@ type ReplicaSetCondition struct {
 
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=apps,v1,ControllerRevision
 
 // DEPRECATED - This group version of ControllerRevision is deprecated by apps/v1/ControllerRevision. See the
 // release notes for more information.
@@ -862,6 +902,10 @@ type ControllerRevision struct {
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:prerelease-lifecycle-gen:introduced=1.8
+// +k8s:prerelease-lifecycle-gen:deprecated=1.9
+// +k8s:prerelease-lifecycle-gen:removed=1.18
+// +k8s:prerelease-lifecycle-gen:replacement=apps,v1,ControllerRevisionList
 
 // ControllerRevisionList is a resource containing a list of ControllerRevision objects.
 type ControllerRevisionList struct {

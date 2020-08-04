@@ -27,10 +27,7 @@ metadata:
   labels:
     k8s-app: kube-dns
 spec:
-  # replicas: not specified here:
-  # 1. In order to make Addon Manager do not reconcile this replicas parameter.
-  # 2. Default is 1.
-  # 3. Will be tuned in real time if DNS horizontal auto-scaling is turned on.
+  replicas: {{ .Replicas }}
   strategy:
     rollingUpdate:
       maxSurge: 10%
@@ -77,7 +74,7 @@ spec:
             path: /readiness
             port: 8081
             scheme: HTTP
-          # we poll on pod startup for the Kubernetes master service and
+          # we poll on pod startup for the Kubernetes control-plane service and
           # only setup the /readiness HTTP server once that's available.
           initialDelaySeconds: 3
           timeoutSeconds: 5
@@ -173,7 +170,7 @@ spec:
       tolerations:
       - key: CriticalAddonsOnly
         operator: Exists
-      - key: {{ .MasterTaintKey }}
+      - key: {{ .ControlPlaneTaintKey }}
         effect: NoSchedule
 `
 
@@ -223,7 +220,7 @@ metadata:
   labels:
     k8s-app: kube-dns
 spec:
-  replicas: 2
+  replicas: {{ .Replicas }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -241,10 +238,10 @@ spec:
       tolerations:
       - key: CriticalAddonsOnly
         operator: Exists
-      - key: {{ .MasterTaintKey }}
+      - key: {{ .ControlPlaneTaintKey }}
         effect: NoSchedule
       nodeSelector:
-        beta.kubernetes.io/os: linux
+        kubernetes.io/os: linux
       containers:
       - name: coredns
         image: {{ .Image }}
@@ -279,6 +276,11 @@ spec:
           timeoutSeconds: 5
           successThreshold: 1
           failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8181
+            scheme: HTTP
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -308,14 +310,19 @@ data:
   Corefile: |
     .:53 {
         errors
-        health
+        health {
+           lameduck 5s
+        }
+        ready
         kubernetes {{ .DNSDomain }} in-addr.arpa ip6.arpa {
            pods insecure
-           upstream
            fallthrough in-addr.arpa ip6.arpa
-        }{{ .Federation }}
+           ttl 30
+        }
         prometheus :9153
-        forward . {{ .UpstreamNameserver }}
+        forward . {{ .UpstreamNameserver }} {
+           max_concurrent 1000
+        }
         cache 30
         loop
         reload

@@ -3,12 +3,21 @@
 reviewers:
   - timothysc
   - dims
-  - ixdy
   - spiffxp
+  - neolit123
+  - bentheelder
+  - brahmaroutu
+  - stevesloka
+  - johnSchnake
 approvers:
   - timothysc
   - dims
-  - ixdy
   - spiffxp
+  - neolit123
+  - bentheelder
+emeritus_approvers:
+  - ixdy
 labels:
 - sig/release
+- sig/testing
+- area/conformance
